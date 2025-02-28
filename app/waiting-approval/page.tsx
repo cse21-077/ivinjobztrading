@@ -14,7 +14,7 @@ export default function WaitingApprovalPage() {
         </CardHeader>
         <CardContent className="text-center px-4 sm:px-6">
           <p className="text-gray-300 mb-4">
-            Thank you for signing up! Your account is currently pending approval from our administrators. We`ll notify
+            Thank you for signing up! Your account is currently pending approval from our administrators. We&apos;ll notify
             you via email once your account has been approved.
           </p>
           <p className="text-gray-300">If you have any questions, please contact our support team.</p>

@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useEffect, useState } from "react"
-import { useRouter, usePathname } from "next/navigation"
+import { useRouter } from "next/router"
 import { useAuthState } from "react-firebase-hooks/auth"
 import { doc, getDoc } from "firebase/firestore"
 import { auth, db } from "@/lib/firebase"
@@ -15,8 +15,8 @@ interface RouteGuardProps {
 
 export default function RouteGuard({ children, allowedRoles = ["client", "admin"] }: RouteGuardProps) {
   const { push } = useRouter()
-  const pathname = usePathname()
-  const [user, loading] = useAuthState(auth)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [user, loading, error] = useAuthState(auth)
   const [authorized, setAuthorized] = useState(false)
 
   useEffect(() => {

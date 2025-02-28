@@ -1,7 +1,20 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import AdminDashboard from "@/components/admin-dashboard"
 import RouteGuard from "@/components/route-guard"
 
 export default function AdminDashboardPage() {
+  const [isClient, setIsClient] = useState(false)
+
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
+
+  if (!isClient) {
+    return null // or a loading spinner
+  }
+
   return (
     <RouteGuard allowedRoles={["admin"]}>
       <div className="min-h-screen bg-gray-900 text-white p-4 sm:p-6 md:p-8">

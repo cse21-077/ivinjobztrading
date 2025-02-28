@@ -74,13 +74,13 @@ export default function LoginForm() {
       <CardContent className="px-4 sm:px-6">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2 text-gray-200">
-            <Label htmlFor="email ">Email</Label>
+            <Label htmlFor="email">Email</Label>
             <Input
               id="email"
               type="email"
               placeholder="trader@gmail.com"
               required
-              className="bg-gray-800 border-gray-700 text-white "
+              className="bg-gray-800 border-gray-700 text-white"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
@@ -162,7 +162,7 @@ export default function LoginForm() {
       </CardContent>
       <CardFooter className="flex justify-center px-4 sm:px-6">
         <p className="text-gray-400 text-sm">
-          Don't have an account?{" "}
+          No have an account?{" "}
           <Link href="/signup" className="text-blue-400 hover:text-blue-300 font-medium">
             Sign up
           </Link>
