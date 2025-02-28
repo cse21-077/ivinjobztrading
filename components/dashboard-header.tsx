@@ -20,9 +20,7 @@ export default function DashboardHeader() {
   const router = useRouter()
   const [user] = useAuthState(auth)
   const [userName, setUserName] = useState("")
-  /* eslint-disable @typescript-eslint/no-unused-vars */
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
-  /* eslint-enable @typescript-eslint/no-unused-vars */
 
   useEffect(() => {
     if (user) {
