@@ -67,8 +67,8 @@ export default function AccountLinking() {
   }
 
   return (
-    <Card className="bg-gray-800">
-      <CardHeader className="px-4 sm:px-6">
+    <Card className="bg-gray-800 text-gray-200">
+      <CardHeader className="px-4 sm:px-6 text-gray-200">
         <CardTitle className="text-lg sm:text-xl">Account Linking</CardTitle>
         <CardDescription>Connect your broker account</CardDescription>
       </CardHeader>
@@ -81,9 +81,9 @@ export default function AccountLinking() {
                 <SelectValue placeholder="Select broker" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="mt4">MetaTrader 4</SelectItem>
-                <SelectItem value="mt5">MetaTrader 5</SelectItem>
-                <SelectItem value="ctrader">cTrader</SelectItem>
+                <SelectItem value="mt4">Weltrade</SelectItem>
+                <SelectItem value="mt5">Deriv</SelectItem>
+                <SelectItem value="ctrader">exness</SelectItem>
               </SelectContent>
             </Select>
           </div>

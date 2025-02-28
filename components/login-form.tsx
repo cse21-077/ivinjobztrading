@@ -65,15 +65,15 @@ export default function LoginForm() {
 
   return (
     <Card className="bg-gray-900 border-gray-800 shadow-xl w-full max-w-md">
-      <CardHeader className="space-y-1 px-4 sm:px-6">
+      <CardHeader className="space-y-1 px-4 sm:px-6 text-gray-200">
         <CardTitle className="text-xl sm:text-2xl font-bold text-center">Sign In</CardTitle>
-        <CardDescription className="text-center text-gray-400">
+        <CardDescription className="text-center text-gray-200">
           Enter your credentials to access your account
         </CardDescription>
       </CardHeader>
       <CardContent className="px-4 sm:px-6">
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
+          <div className="space-y-2 text-gray-400">
             <Label htmlFor="email">Email</Label>
             <Input
               id="email"
@@ -85,7 +85,7 @@ export default function LoginForm() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2 text-gray-200">
             <div className="flex justify-between items-center flex-wrap gap-1">
               <Label htmlFor="password">Password</Label>
               <Link href="/forgot-password" className="text-sm text-blue-400 hover:text-blue-300">
@@ -128,7 +128,7 @@ export default function LoginForm() {
           </Button>
         </form>
 
-        <div className="mt-6">
+        <div className="mt-6 text-gray-200" >
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
               <Separator className="w-full border-gray-700" />

@@ -59,7 +59,7 @@ export default function EAConfiguration() {
   }
 
   return (
-    <Card className="bg-gray-800">
+    <Card className="bg-gray-800 text-gray-200">
       <CardHeader className="px-4 sm:px-6">
         <CardTitle className="text-lg sm:text-xl">EA Configuration</CardTitle>
         <CardDescription>Configure your Expert Advisor settings</CardDescription>
