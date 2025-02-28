@@ -68,16 +68,16 @@ export default function AccountLinking() {
 
   return (
     <Card className="bg-gray-800">
-      <CardHeader>
-        <CardTitle>Account Linking</CardTitle>
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="text-lg sm:text-xl">Account Linking</CardTitle>
         <CardDescription>Connect your broker account</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-4 sm:px-6">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="broker">Broker</Label>
             <Select value={broker} onValueChange={setBroker}>
-              <SelectTrigger id="broker">
+              <SelectTrigger id="broker" className="w-full">
                 <SelectValue placeholder="Select broker" />
               </SelectTrigger>
               <SelectContent>
@@ -127,7 +127,7 @@ export default function AccountLinking() {
           <div className="space-y-2">
             <Label htmlFor="leverage">Leverage</Label>
             <Select value={leverage} onValueChange={setLeverage}>
-              <SelectTrigger id="leverage">
+              <SelectTrigger id="leverage" className="w-full">
                 <SelectValue placeholder="Select leverage" />
               </SelectTrigger>
               <SelectContent>

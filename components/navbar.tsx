@@ -1,12 +1,35 @@
 "use client"
 
 import Link from "next/link"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Menu, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 export default function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const checkScreenSize = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+
+    // Initial check
+    checkScreenSize()
+
+    // Add event listener
+    window.addEventListener("resize", checkScreenSize)
+
+    // Cleanup
+    return () => window.removeEventListener("resize", checkScreenSize)
+  }, [])
+
+  // Close menu when switching to desktop view
+  useEffect(() => {
+    if (!isMobile) {
+      setIsMenuOpen(false)
+    }
+  }, [isMobile])
 
   return (
     <nav className="bg-gray-900 border-b border-gray-800">
@@ -30,7 +53,7 @@ export default function Navbar() {
               Contact
             </Link>
             <Link href="/signup" passHref>
-              <Button variant="outline" className="ml-4 text-black" >
+              <Button variant="outline" className="ml-4">
                 Sign Up
               </Button>
             </Link>
@@ -41,6 +64,7 @@ export default function Navbar() {
             <button
               onClick={() => setIsMenuOpen(!isMenuOpen)}
               className="text-gray-300 hover:text-white focus:outline-none"
+              aria-label={isMenuOpen ? "Close menu" : "Open menu"}
             >
               {isMenuOpen ? <X size={24} /> : <Menu size={24} />}
             </button>

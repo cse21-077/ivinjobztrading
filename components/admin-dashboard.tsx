@@ -96,81 +96,91 @@ export default function AdminDashboard() {
 
   return (
     <Card className="w-full">
-      <CardHeader>
-        <CardTitle>Admin Dashboard</CardTitle>
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="text-lg sm:text-xl">Admin Dashboard</CardTitle>
         <CardDescription>Manage users and approvals</CardDescription>
         <Button onClick={handleSignOut} className="ml-auto">
           Sign Out
         </Button>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-4 sm:px-6">
         <div className="mb-6">
           <h2 className="text-xl font-semibold mb-2">Mini Dashboard</h2>
           <p>Total Users with Client Role: {totalClients}</p>
         </div>
         <Tabs defaultValue="pending">
-          <TabsList>
-            <TabsTrigger value="pending">Pending Approvals</TabsTrigger>
-            <TabsTrigger value="all">All Users</TabsTrigger>
+          <TabsList className="w-full sm:w-auto flex flex-wrap">
+            <TabsTrigger value="pending" className="flex-1 sm:flex-none">
+              Pending Approvals
+            </TabsTrigger>
+            <TabsTrigger value="all" className="flex-1 sm:flex-none">
+              All Users
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="pending">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pendingUsers.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell>{`${user.firstName} ${user.lastName}`}</TableCell>
-                    <TableCell>{user.email}</TableCell>
-                    <TableCell>Pending</TableCell>
-                    <TableCell>
-                      <Button onClick={() => approveUser(user.id)} className="mr-2">
-                        Approve
-                      </Button>
-                      <Button onClick={() => rejectUser(user.id)} variant="destructive">
-                        Reject
-                      </Button>
-                    </TableCell>
+            <div className="overflow-x-auto -mx-4 sm:-mx-6">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="whitespace-nowrap">Name</TableHead>
+                    <TableHead className="whitespace-nowrap">Email</TableHead>
+                    <TableHead className="whitespace-nowrap">Status</TableHead>
+                    <TableHead className="whitespace-nowrap">Action</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {pendingUsers.map((user) => (
+                    <TableRow key={user.id}>
+                      <TableCell className="whitespace-nowrap">{`${user.firstName} ${user.lastName}`}</TableCell>
+                      <TableCell className="whitespace-nowrap">{user.email}</TableCell>
+                      <TableCell className="whitespace-nowrap">Pending</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-2">
+                          <Button onClick={() => approveUser(user.id)} size="sm">
+                            Approve
+                          </Button>
+                          <Button onClick={() => rejectUser(user.id)} variant="destructive" size="sm">
+                            Reject
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </TabsContent>
           <TabsContent value="all">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {users.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell>{`${user.firstName} ${user.lastName}`}</TableCell>
-                    <TableCell>{user.email}</TableCell>
-                    <TableCell>{user.role}</TableCell>
-                    <TableCell>{user.approved ? "Approved" : "Pending"}</TableCell>
-                    <TableCell>
-                      {user.role !== "admin" && (
-                        <Button onClick={() => revokeAccess(user.id)} variant="destructive">
-                          Revoke Access
-                        </Button>
-                      )}
-                    </TableCell>
+            <div className="overflow-x-auto -mx-4 sm:-mx-6">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="whitespace-nowrap">Name</TableHead>
+                    <TableHead className="whitespace-nowrap">Email</TableHead>
+                    <TableHead className="whitespace-nowrap">Role</TableHead>
+                    <TableHead className="whitespace-nowrap">Status</TableHead>
+                    <TableHead className="whitespace-nowrap">Action</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {users.map((user) => (
+                    <TableRow key={user.id}>
+                      <TableCell className="whitespace-nowrap">{`${user.firstName} ${user.lastName}`}</TableCell>
+                      <TableCell className="whitespace-nowrap">{user.email}</TableCell>
+                      <TableCell className="whitespace-nowrap">{user.role}</TableCell>
+                      <TableCell className="whitespace-nowrap">{user.approved ? "Approved" : "Pending"}</TableCell>
+                      <TableCell>
+                        {user.role !== "admin" && (
+                          <Button onClick={() => revokeAccess(user.id)} variant="destructive" size="sm">
+                            Revoke Access
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
             {lastVisible && (
               <div className="mt-4">
                 <Button onClick={fetchMoreUsers} disabled={loading}>

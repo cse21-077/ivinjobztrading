@@ -60,11 +60,11 @@ export default function EAConfiguration() {
 
   return (
     <Card className="bg-gray-800">
-      <CardHeader>
-        <CardTitle>EA Configuration</CardTitle>
+      <CardHeader className="px-4 sm:px-6">
+        <CardTitle className="text-lg sm:text-xl">EA Configuration</CardTitle>
         <CardDescription>Configure your Expert Advisor settings</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-4 sm:px-6">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="flex items-center justify-between">
             <Label htmlFor="ea-toggle">Enable EA</Label>
@@ -73,7 +73,7 @@ export default function EAConfiguration() {
           <div className="space-y-2">
             <Label htmlFor="trading-pairs">Trading Pairs</Label>
             <Select value={tradingPairs.join(",")} onValueChange={(value) => setTradingPairs(value.split(","))}>
-              <SelectTrigger id="trading-pairs">
+              <SelectTrigger id="trading-pairs" className="w-full">
                 <SelectValue placeholder="Select trading pairs" />
               </SelectTrigger>
               <SelectContent>

@@ -7,12 +7,12 @@ export default function WaitingApprovalPage() {
     <div className="flex min-h-screen items-center justify-center bg-gray-950 p-4">
       <Card className="bg-gray-900 border-gray-800 shadow-xl w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Account Pending Approval</CardTitle>
+          <CardTitle className="text-xl sm:text-2xl font-bold text-center">Account Pending Approval</CardTitle>
           <CardDescription className="text-center text-gray-400">
             Your account is waiting for admin approval
           </CardDescription>
         </CardHeader>
-        <CardContent className="text-center">
+        <CardContent className="text-center px-4 sm:px-6">
           <p className="text-gray-300 mb-4">
             Thank you for signing up! Your account is currently pending approval from our administrators. We'll notify
             you via email once your account has been approved.
