@@ -10,10 +10,12 @@ export const metadata: Metadata = {
   description: "Trade with Flow",
 }
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
+export function generateViewport(): Viewport {
+  return {
+    width: "device-width",
+    initialScale: 1,
+    maximumScale: 1,
+  }
 }
 
 export default function RootLayout({

@@ -65,30 +65,30 @@ export default function SignupForm() {
   return (
     <Card className="bg-gray-900 border-gray-800 shadow-xl w-full max-w-md">
       <CardHeader className="space-y-1 px-4 sm:px-6">
-        <CardTitle className="text-xl sm:text-2xl font-bold text-center text-gray-200">Create an account</CardTitle>
-        <CardDescription className="text-center text-gray-300">
+        <CardTitle className="text-xl sm:text-2xl font-bold text-center">Create an account</CardTitle>
+        <CardDescription className="text-center text-gray-400">
           Enter your information to create an account
         </CardDescription>
       </CardHeader>
       <CardContent className="px-4 sm:px-6">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2 text-gray-200">
+            <div className="space-y-2">
               <Label htmlFor="firstName">First name</Label>
               <Input
                 id="firstName"
-                placeholder="Ivin"
+                placeholder="John"
                 required
                 className="bg-gray-800 border-gray-700 text-white"
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
               />
             </div>
-            <div className="space-y-2 text-gray-200">
+            <div className="space-y-2">
               <Label htmlFor="lastName">Last name</Label>
               <Input
                 id="lastName"
-                placeholder="Jobz"
+                placeholder="Doe"
                 required
                 className="bg-gray-800 border-gray-700 text-white"
                 value={lastName}
@@ -97,12 +97,12 @@ export default function SignupForm() {
             </div>
           </div>
 
-          <div className="space-y-2 text-gray-200">
+          <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input
               id="email"
               type="email"
-              placeholder="ivinj@gmail.com"
+              placeholder="name@example.com"
               required
               className="bg-gray-800 border-gray-700 text-white"
               value={email}
@@ -110,7 +110,7 @@ export default function SignupForm() {
             />
           </div>
 
-          <div className="space-y-2 text-gray-200">
+          <div className="space-y-2">
             <Label htmlFor="password">Password</Label>
             <div className="relative">
               <Input
@@ -133,7 +133,7 @@ export default function SignupForm() {
             </div>
           </div>
 
-          <div className="space-y-2 text-gray-200">
+          <div className="space-y-2">
             <Label htmlFor="confirmPassword">Confirm Password</Label>
             <div className="relative">
               <Input
@@ -187,7 +187,7 @@ export default function SignupForm() {
             </div>
           </div>
 
-          <div className="mt-6 text-gray-200">
+          <div className="mt-6">
             <Button variant="outline" className="w-full bg-gray-800 border-gray-700 hover:bg-gray-700">
               <svg
                 className="mr-2 h-4 w-4"

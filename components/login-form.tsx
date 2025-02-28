@@ -66,26 +66,26 @@ export default function LoginForm() {
   return (
     <Card className="bg-gray-900 border-gray-800 shadow-xl w-full max-w-md">
       <CardHeader className="space-y-1 px-4 sm:px-6">
-        <CardTitle className="text-xl sm:text-2xl font-bold text-center text-gray-200">Sign In</CardTitle>
-        <CardDescription className="text-center text-gray-200">
+        <CardTitle className="text-xl sm:text-2xl font-bold text-center">Sign In</CardTitle>
+        <CardDescription className="text-center text-gray-400">
           Enter your credentials to access your account
         </CardDescription>
       </CardHeader>
       <CardContent className="px-4 sm:px-6">
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2 text-gray-200">
+          <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input
               id="email"
               type="email"
-              placeholder="trader@gmail.com"
+              placeholder="name@example.com"
               required
               className="bg-gray-800 border-gray-700 text-white"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
-          <div className="space-y-2 text-gray-200">
+          <div className="space-y-2">
             <div className="flex justify-between items-center flex-wrap gap-1">
               <Label htmlFor="password">Password</Label>
               <Link href="/forgot-password" className="text-sm text-blue-400 hover:text-blue-300">
@@ -138,7 +138,7 @@ export default function LoginForm() {
             </div>
           </div>
 
-          <div className="mt-6 text-gray-200">
+          <div className="mt-6">
             <Button variant="outline" className="w-full bg-gray-800 border-gray-700 hover:bg-gray-700">
               <svg
                 className="mr-2 h-4 w-4"
@@ -162,7 +162,7 @@ export default function LoginForm() {
       </CardContent>
       <CardFooter className="flex justify-center px-4 sm:px-6">
         <p className="text-gray-400 text-sm">
-          No have an account?{" "}
+          Don't have an account?{" "}
           <Link href="/signup" className="text-blue-400 hover:text-blue-300 font-medium">
             Sign up
           </Link>
