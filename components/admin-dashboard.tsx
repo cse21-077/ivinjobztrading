@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { collection, query, getDocs, doc, updateDoc, deleteDoc, limit, startAfter, orderBy } from "firebase/firestore"
+import { collection, query, getDocs, doc, updateDoc, deleteDoc, limit, startAfter, orderBy, QueryDocumentSnapshot, DocumentData } from "firebase/firestore"
 import { getAuth, signOut } from "firebase/auth"
 import { db } from "@/lib/firebase"
 import { Button } from "@/components/ui/button"
@@ -22,7 +22,7 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([])
   const [pendingUsers, setPendingUsers] = useState<User[]>([])
   const [totalClients, setTotalClients] = useState(0)
-  const [lastVisible, setLastVisible] = useState<any>(null)
+  const [lastVisible, setLastVisible] = useState<QueryDocumentSnapshot<DocumentData> | null>(null)
   const [loading, setLoading] = useState(false)
 
   const PAGE_SIZE = 10

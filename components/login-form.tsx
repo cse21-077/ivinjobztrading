@@ -67,8 +67,8 @@ export default function LoginForm() {
     <Card className="bg-gray-900 border-gray-800 shadow-xl w-full max-w-md">
       <CardHeader className="space-y-1 px-4 sm:px-6">
         <CardTitle className="text-xl sm:text-2xl font-bold text-center text-gray-200">Sign In</CardTitle>
-        <CardDescription className="text-center text-gray-200">
-          Enter your credentials to access your account
+        <CardDescription className="text-center text-gray-400">
+          Don&apos;t have an account?
         </CardDescription>
       </CardHeader>
       <CardContent className="px-4 sm:px-6">

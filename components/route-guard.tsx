@@ -14,7 +14,7 @@ interface RouteGuardProps {
 }
 
 export default function RouteGuard({ children, allowedRoles = ["client", "admin"] }: RouteGuardProps) {
-  const router = useRouter()
+  const { push } = useRouter()
   const pathname = usePathname()
   const [user, loading] = useAuthState(auth)
   const [authorized, setAuthorized] = useState(false)
@@ -24,7 +24,7 @@ export default function RouteGuard({ children, allowedRoles = ["client", "admin"
       if (!loading) {
         if (!user) {
           setAuthorized(false)
-          router.push("/login")
+          push("/login")
         } else {
           const userRef = doc(db, "users", user.uid)
           const userSnap = await getDoc(userRef)
@@ -35,21 +35,21 @@ export default function RouteGuard({ children, allowedRoles = ["client", "admin"
               setAuthorized(true)
             } else if (!userData.approved) {
               setAuthorized(false)
-              router.push("/waiting-approval")
+              push("/waiting-approval")
             } else {
               setAuthorized(false)
-              router.push("/unauthorized")
+              push("/unauthorized")
             }
           } else {
             setAuthorized(false)
-            router.push("/login")
+            push("/login")
           }
         }
       }
     }
 
     checkAuthorization()
-  }, [user, loading, router, allowedRoles])
+  }, [user, loading, push, allowedRoles])
 
   if (loading || !authorized) {
     return <div>Loading...</div> // You can replace this with a proper loading component
