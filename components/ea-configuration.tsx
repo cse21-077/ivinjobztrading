@@ -60,17 +60,17 @@ export default function EAConfiguration() {
 
   return (
     <Card className="bg-gray-800">
-      <CardHeader className="px-4 sm:px-6">
+      <CardHeader className="px-4 sm:px-6 text-gray-200">
         <CardTitle className="text-lg sm:text-xl">EA Configuration</CardTitle>
-        <CardDescription>Configure your Expert Advisor settings</CardDescription>
+        <CardDescription className="text-gray-400">Configure your Expert Advisor settings</CardDescription>
       </CardHeader>
       <CardContent className="px-4 sm:px-6">
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="ea-toggle">Enable EA</Label>
+          <div className="flex items-center justify-between text-gray-300">
+            <Label htmlFor="ea-toggle ">Enable EA</Label>
             <Switch id="ea-toggle" checked={isEAEnabled} onCheckedChange={setIsEAEnabled} />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2 text-gray-400">
             <Label htmlFor="trading-pairs">Trading Pairs</Label>
             <Select value={tradingPairs.join(",")} onValueChange={(value) => setTradingPairs(value.split(","))}>
               <SelectTrigger id="trading-pairs" className="w-full">
@@ -81,10 +81,13 @@ export default function EAConfiguration() {
                 <SelectItem value="GBPUSD">GBP/USD</SelectItem>
                 <SelectItem value="USDJPY">USD/JPY</SelectItem>
                 <SelectItem value="AUDUSD">AUD/USD</SelectItem>
+                <SelectItem value="VIX75">VIX 75</SelectItem>
+                <SelectItem value="VIX100">VIX 100</SelectItem>
+                <SelectItem value="GAiN">GAIN X 400</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2 text-gray-400">
             <Label htmlFor="lot-size">Lot Size</Label>
             <Input
               id="lot-size"

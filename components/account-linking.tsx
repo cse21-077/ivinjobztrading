@@ -67,27 +67,27 @@ export default function AccountLinking() {
   }
 
   return (
-    <Card className="bg-gray-800">
-      <CardHeader className="px-4 sm:px-6">
+    <Card className="bg-gray-800 text-gray-200">
+      <CardHeader className="px-4 sm:px-6 text-gray-200">
         <CardTitle className="text-lg sm:text-xl">Account Linking</CardTitle>
-        <CardDescription>Connect your broker account</CardDescription>
+        <CardDescription className="text-gray-200">Connect your broker account</CardDescription>
       </CardHeader>
-      <CardContent className="px-4 sm:px-6">
+      <CardContent className="px-4 sm:px-6 text-gray-200">
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
+          <div className="space-y-2 ">
             <Label htmlFor="broker">Broker</Label>
             <Select value={broker} onValueChange={setBroker}>
-              <SelectTrigger id="broker" className="w-full">
+              <SelectTrigger id="broker" className=" w-full ">
                 <SelectValue placeholder="Select broker" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="mt4">MetaTrader 4</SelectItem>
-                <SelectItem value="mt5">MetaTrader 5</SelectItem>
-                <SelectItem value="ctrader">cTrader</SelectItem>
+                <SelectItem value="mt4">Deriv</SelectItem>
+                <SelectItem value="mt5">Exness</SelectItem>
+                <SelectItem value="ctrader">Weltrade</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2 ">
             <Label htmlFor="username">Username</Label>
             <Input
               id="username"
