@@ -77,7 +77,7 @@ export default function SignupForm() {
               <Label htmlFor="firstName">First name</Label>
               <Input
                 id="firstName"
-                placeholder="John"
+                placeholder="Name"
                 required
                 className="bg-gray-800 border-gray-700 text-white"
                 value={firstName}
@@ -88,7 +88,7 @@ export default function SignupForm() {
               <Label htmlFor="lastName">Last name</Label>
               <Input
                 id="lastName"
-                placeholder="Doe"
+                placeholder="Surname"
                 required
                 className="bg-gray-800 border-gray-700 text-white"
                 value={lastName}
