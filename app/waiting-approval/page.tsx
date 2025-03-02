@@ -9,12 +9,12 @@ export default function WaitingApprovalPage() {
         <CardHeader className="space-y-1">
           <CardTitle className="text-xl sm:text-2xl font-bold text-center">Account Pending Approval</CardTitle>
           <CardDescription className="text-center text-gray-400">
-            Your account is waiting for admin approval
+            Your account is waiting for admin approval 
           </CardDescription>
         </CardHeader>
         <CardContent className="text-center px-4 sm:px-6">
           <p className="text-gray-300 mb-4">
-            Thank you for signing up! Your account is currently pending approval from our administrators. We'll notify
+            Thank you for signing up! Your account is currently pending approval from our administrators , after approval your account will be given an instance in our trading server, this is approval system done to avoid huge server costs. We'll notify
             you via email once your account has been approved.
           </p>
           <p className="text-gray-300">If you have any questions, please contact our support team.</p>
