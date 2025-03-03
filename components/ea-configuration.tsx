@@ -32,6 +32,11 @@ export default function EAConfiguration() {
   const [lotSize, setLotSize] = useState("0.01")
   const [symbols, setSymbols] = useState<{ forex: DerivSymbol[], synthetic_indices: DerivSymbol[] }>({ forex: [], synthetic_indices: [] })
   const [isLoading, setIsLoading] = useState(false)
+  const [riskLevel, setRiskLevel] = useState<'low' | 'medium' | 'high'>('medium')
+  const [maxTrades, setMaxTrades] = useState(3)
+  const [stopLoss, setStopLoss] = useState(50)
+  const [takeProfit, setTakeProfit] = useState(100)
+  const [tradingHours, setTradingHours] = useState<'24/7' | 'market_hours' | 'custom'>('24/7')
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -46,6 +51,11 @@ export default function EAConfiguration() {
             setSelectedMarket(data.market || "")
             setSelectedSymbol(data.symbol || "")
             setLotSize(data.lotSize || "0.01")
+            setRiskLevel(data.riskLevel || 'medium')
+            setMaxTrades(data.maxTrades || 3)
+            setStopLoss(data.stopLoss || 50)
+            setTakeProfit(data.takeProfit || 100)
+            setTradingHours(data.tradingHours || '24/7')
           }
 
           // Fetch Deriv symbols
@@ -83,6 +93,11 @@ export default function EAConfiguration() {
           market: selectedMarket,
           symbol: selectedSymbol,
           lotSize: parseFloat(lotSize),
+          riskLevel,
+          maxTrades,
+          stopLoss,
+          takeProfit,
+          tradingHours,
           lastUpdated: new Date()
         },
         { merge: true }
@@ -156,6 +171,67 @@ export default function EAConfiguration() {
               onChange={(e) => setLotSize(e.target.value)}
               placeholder="Enter lot size"
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Risk Level</Label>
+            <Select value={riskLevel} onValueChange={(value: 'low' | 'medium' | 'high') => setRiskLevel(value)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="low">Low Risk</SelectItem>
+                <SelectItem value="medium">Medium Risk</SelectItem>
+                <SelectItem value="high">High Risk</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Maximum Concurrent Trades</Label>
+            <Input
+              type="number"
+              value={maxTrades}
+              onChange={(e) => setMaxTrades(parseInt(e.target.value))}
+              min={1}
+              max={5}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Stop Loss (pips)</Label>
+            <Input
+              type="number"
+              value={stopLoss}
+              onChange={(e) => setStopLoss(parseInt(e.target.value))}
+              min={10}
+              max={200}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Take Profit (pips)</Label>
+            <Input
+              type="number"
+              value={takeProfit}
+              onChange={(e) => setTakeProfit(parseInt(e.target.value))}
+              min={20}
+              max={400}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Trading Hours</Label>
+            <Select value={tradingHours} onValueChange={(value: '24/7' | 'market_hours' | 'custom') => setTradingHours(value)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="24/7">24/7 Trading</SelectItem>
+                <SelectItem value="market_hours">Market Hours Only</SelectItem>
+                <SelectItem value="custom">Custom Hours</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <Button type="submit" className="w-full" disabled={isLoading}>

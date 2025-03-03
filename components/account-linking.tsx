@@ -44,6 +44,7 @@ interface DerivConfig {
   status: 'disconnected' | 'connecting' | 'connected';
   activeSymbols: string[];
   selectedAccountId?: string;
+  tradingMode: 'manual' | 'automated' | null;
 }
 
 interface MT4Config {
@@ -113,17 +114,22 @@ export default function DerivAccountLinking() {
   const [selectedAccount, setSelectedAccount] = useState<DerivAccount | null>(null)
   const [showAccountSelect, setShowAccountSelect] = useState(false)
   const [isAccountConfirmed, setIsAccountConfirmed] = useState(false)
+  const [showSuccessScreen, setShowSuccessScreen] = useState(false)
+  const [tradingMode, setTradingMode] = useState<'automated' | null>(null)
 
   const handleDisconnect = useCallback(async () => {
     try {
+      console.log('=== Starting Disconnection Process ===');
       setIsLoading(true);
       setIsConnecting(false);
       
       if (wsConnection) {
+        console.log('1. Closing WebSocket connection...');
         wsConnection.close();
       }
 
-      const response = await fetch('/api/mt5/disconnect', {
+      console.log('2. Disconnecting from VPS...');
+      const response = await fetch('/api/vps/disconnect', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -135,6 +141,7 @@ export default function DerivAccountLinking() {
       
       if (result.success) {
         if (user) {
+          console.log('3. Updating Firestore with disconnected status...');
           await setDoc(doc(db, "derivConfigs", user.uid), {
             isConnected: false,
             lastDisconnected: new Date(),
@@ -149,6 +156,7 @@ export default function DerivAccountLinking() {
           setMarkets([]);
           setLeverage("");
           setActiveSymbols([]);
+          console.log('4. Disconnection completed successfully');
           toast.success("Successfully disconnected your trading account");
         }
       } else {
@@ -228,55 +236,96 @@ export default function DerivAccountLinking() {
     if (isConnecting) return null;
     
     try {
-      console.log('Starting WebSocket connection to Deriv...');
+      console.log('=== Starting Connection Process ===');
+      console.log('1. Initializing WebSocket connection to Deriv...');
+      setIsConnecting(true);
+      setConnectionStatus('connecting');
+      
       const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3');
       
+      // Reduce timeout to 5 seconds for faster feedback
+      const connectionTimeout = setTimeout(() => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          console.error('Connection timeout - WebSocket failed to open within 5 seconds');
+          ws.close();
+          handleConnectionError('Connection timeout - please try again', token);
+        }
+      }, 5000); // 5 second timeout
+      
       ws.onopen = () => {
-        console.log('WebSocket connection opened, authorizing with Deriv...');
+        clearTimeout(connectionTimeout);
+        console.log('2. WebSocket connection opened successfully');
+        console.log('3. Sending authorization request to Deriv...');
         const authMessage = {
           authorize: token,
           passthrough: { userId: user?.uid }
         };
-        console.log('Sending authorization request...');
         ws.send(JSON.stringify(authMessage));
       };
 
       ws.onmessage = (event) => {
         const response = JSON.parse(event.data);
-        console.log('WebSocket message received:', response);
+        console.log('4. Received message from Deriv:', response.msg_type);
         
         if (response.msg_type === 'authorize') {
           if (response.error) {
             console.error('Deriv authorization error:', response.error);
             handleConnectionError(response.error.message, token);
           } else {
-            console.log('Successfully authorized with Deriv');
-            setConnectionStatus('connected');
-            setIsConnected(true);
-            setIsConnecting(false);
-            toast.success('Successfully connected to Deriv');
+            console.log('5. Successfully authorized with Deriv');
+            console.log('6. Starting VPS connection process...');
             
-            console.log('Requesting available trading symbols...');
-            ws.send(JSON.stringify({
-              active_symbols: "brief",
-              product_type: "mt5"
-            }));
+            // Start VPS connection in parallel with Deriv setup
+            fetch('/api/vps/connect', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                userId: user?.uid,
+                accountId: response.authorize.loginid,
+                token: token
+              })
+            }).then(async (vpsResponse) => {
+              const vpsResult = await vpsResponse.json();
+              if (!vpsResult.success) {
+                console.error('VPS connection failed:', vpsResult.error);
+                throw new Error(vpsResult.error);
+              }
+              console.log('7. VPS connection established successfully');
+              
+              // Update connection status
+              setConnectionStatus('connected');
+              setIsConnected(true);
+              setIsConnecting(false);
+              setShowSuccessScreen(true);
+              toast.success('Successfully connected to Deriv and VPS');
+              
+              // Request trading data in parallel
+              console.log('8. Requesting trading data...');
+              ws.send(JSON.stringify({
+                active_symbols: "brief",
+                product_type: "mt5"
+              }));
 
-            console.log('Subscribing to account status...');
-            ws.send(JSON.stringify({
-              account_status: 1,
-              subscribe: 1
-            }));
+              ws.send(JSON.stringify({
+                account_status: 1,
+                subscribe: 1
+              }));
+            }).catch((error) => {
+              console.error('VPS connection error:', error);
+              handleConnectionError('Failed to connect to VPS server', token);
+            });
           }
         }
         
         if (response.msg_type === 'active_symbols') {
-          console.log('Received trading symbols:', response.active_symbols?.length);
+          console.log('9. Received trading symbols:', response.active_symbols?.length);
           handleSymbolsResponse(response.active_symbols as DerivSymbol[]);
         }
 
         if (response.msg_type === 'account_status') {
-          console.log('Received account status:', response.status);
+          console.log('10. Received account status:', response.status);
           updateAccountStatus(response.status as DerivAccountStatus);
         }
       };
@@ -298,6 +347,7 @@ export default function DerivAccountLinking() {
     } catch (error) {
       console.error('Connection establishment error:', error);
       setIsConnecting(false);
+      setConnectionStatus('disconnected');
       handleConnectionError('Failed to establish connection to Deriv', token);
       return null;
     }
@@ -305,16 +355,16 @@ export default function DerivAccountLinking() {
 
   useEffect(() => {
     let mounted = true;
-    let connectionAttempted = false;
-    let wsInstance: WebSocket | null = null;
+    const connectionAttempted = false;
 
     const fetchUserConfig = async () => {
-      if (!user || !mounted || connectionAttempted || isConnecting) {
+      if (!user || !mounted || connectionAttempted) {
         return;
       }
 
       try {
-        console.log('Fetching user configuration...');
+        console.log('=== Starting Configuration Fetch ===');
+        console.log('1. Fetching user configuration from Firestore...');
         
         // Get saved configuration first
         const configRef = doc(db, "derivConfigs", user.uid);
@@ -322,12 +372,13 @@ export default function DerivAccountLinking() {
         const savedConfig = configSnap.exists() ? configSnap.data() as DerivConfig : null;
         
         // Then get accounts
+        console.log('2. Fetching Deriv accounts...');
         const accountsRef = doc(db, "derivAccounts", user.uid);
         const accountsSnap = await getDoc(accountsRef);
         
         if (accountsSnap.exists()) {
           const accounts = accountsSnap.data().accounts;
-          console.log('Found Deriv accounts:', accounts);
+          console.log('3. Found Deriv accounts:', accounts?.length || 0);
           
           if (accounts && accounts.length > 0) {
             setAvailableAccounts(accounts);
@@ -336,32 +387,15 @@ export default function DerivAccountLinking() {
             if (savedConfig?.selectedAccountId) {
               const savedAccount = accounts.find((acc: DerivAccount) => acc.accountId === savedConfig.selectedAccountId);
               if (savedAccount) {
-                console.log('Using previously selected account:', savedAccount.accountId);
+                console.log('4. Found previously selected account:', savedAccount.accountId);
                 setSelectedAccount(savedAccount);
-                if (!wsConnection && connectionStatus === 'disconnected') {
-                  setIsConnecting(true);
-                  connectionAttempted = true;
-                  wsInstance = establishWebSocketConnection(savedAccount.token);
-                  setApiToken(savedAccount.token);
-                  setAccountId(savedAccount.accountId);
-                }
-                return;
+                setIsAccountConfirmed(false); // Don't auto-confirm
               }
             }
             
-            // If no saved preference or saved account not found
-            if (accounts.length === 1) {
-              // Single account - use it automatically
-              setSelectedAccount(accounts[0]);
-              if (!wsConnection && connectionStatus === 'disconnected') {
-                setIsConnecting(true);
-                connectionAttempted = true;
-                wsInstance = establishWebSocketConnection(accounts[0].token);
-                setApiToken(accounts[0].token);
-                setAccountId(accounts[0].accountId);
-              }
-            } else {
-              // Multiple accounts - show selection
+            // Show account selection if there are multiple accounts or no saved preference
+            if (accounts.length > 1 || !savedConfig?.selectedAccountId) {
+              console.log('5. Showing account selection interface');
               setShowAccountSelect(true);
             }
           }
@@ -371,12 +405,13 @@ export default function DerivAccountLinking() {
 
         // Set other configuration if available
         if (savedConfig) {
-          console.log('Found Deriv configuration:', savedConfig);
+          console.log('6. Setting up saved configuration');
           setServer(savedConfig.server || "");
           setMarkets(savedConfig.markets || []);
           setLeverage(savedConfig.leverage || "");
           setActiveSymbols(savedConfig.activeSymbols || []);
         }
+        console.log('7. Configuration fetch completed');
       } catch (error) {
         console.error("Error fetching config:", error);
         if (mounted) {
@@ -389,11 +424,8 @@ export default function DerivAccountLinking() {
 
     return () => {
       mounted = false;
-      if (wsInstance) {
-        wsInstance.close();
-      }
     };
-  }, [user, wsConnection, establishWebSocketConnection, isConnecting, connectionStatus]);
+  }, [user]);
 
   const handleAccountSelect = useCallback(async (account: DerivAccount) => {
     setSelectedAccount(account);
@@ -404,6 +436,8 @@ export default function DerivAccountLinking() {
     if (!selectedAccount || !user) return;
 
     try {
+      console.log('=== Starting Account Connection ===');
+      console.log('Account ID:', selectedAccount.accountId);
       setIsAccountConfirmed(true);
       setShowAccountSelect(false);
       setIsConnecting(true);
@@ -411,7 +445,8 @@ export default function DerivAccountLinking() {
       // Save selected account preference
       await setDoc(doc(db, "derivConfigs", user.uid), {
         selectedAccountId: selectedAccount.accountId,
-        status: 'connecting'
+        status: 'connecting',
+        lastConnectionAttempt: new Date()
       }, { merge: true });
       
       // Establish connection with selected account
@@ -489,7 +524,8 @@ export default function DerivAccountLinking() {
           lastConnected: new Date(),
           selectedSymbols: selectedSymbols,
           status: 'connected',
-          activeSymbols: activeSymbols
+          activeSymbols: activeSymbols,
+          tradingMode: null
         }
         
         await setDoc(doc(db, "derivConfigs", user.uid), configData)
@@ -575,11 +611,32 @@ export default function DerivAccountLinking() {
     window.location.href = oauthUrl;
   };
 
+  const handleTradingModeSelect = useCallback(async (mode: 'automated') => {
+    if (!user || !selectedAccount) return;
+
+    try {
+      setTradingMode(mode);
+      setIsLoading(true);
+
+      // Save trading mode preference
+      await setDoc(doc(db, "derivConfigs", user.uid), {
+        tradingMode: mode,
+        lastUpdated: new Date()
+      }, { merge: true });
+      
+    } catch (error) {
+      console.error("Error setting up trading mode:", error);
+      toast.error("Failed to set up trading mode");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user, selectedAccount]);
+
   return (
     <Card className="bg-gray-800 text-gray-200">
       <CardHeader className="px-4 sm:px-6 text-gray-200">
         <CardTitle className="text-lg sm:text-xl">Deriv Account Connection</CardTitle>
-        <CardDescription>Connect your Deriv trading account to our automated system</CardDescription>
+        <CardDescription>Connect your Deriv trading account to our automated trading system</CardDescription>
       </CardHeader>
       <CardContent className="px-4 sm:px-6">
         <Alert className="mb-6 bg-gray-700 border-amber-500">
@@ -587,87 +644,140 @@ export default function DerivAccountLinking() {
           <AlertTitle>Important</AlertTitle>
           <AlertDescription>
             {connectionStatus === 'connected' 
-              ? "Your account is connected and ready for trading. You can disconnect at any time."
+              ? "Your account is connected and ready for automated trading."
               : connectionStatus === 'connecting'
-              ? "Establishing connection to your Deriv account..."
-              : "Connect your Deriv account securely using OAuth. This is the recommended and most secure way to connect your account."}
+              ? "Establishing connection to Deriv and our VPS server... This may take a few moments."
+              : "Connect your Deriv account securely using OAuth to enable automated trading."}
           </AlertDescription>
         </Alert>
         
-        {(showAccountSelect || !isAccountConfirmed) && availableAccounts.length > 0 && (
-          <div className="mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Select Trading Account</h3>
-              {selectedAccount && !isAccountConfirmed && (
+        {showSuccessScreen && isConnected ? (
+          <div className="space-y-6">
+            <div className="rounded-lg bg-green-900/20 border border-green-500 p-4">
+              <h3 className="text-lg font-semibold text-green-400 mb-2">Connection Successful!</h3>
+              <p className="text-sm text-gray-300">Your Deriv account is now connected to our automated trading system.</p>
+            </div>
+
+            {!tradingMode ? (
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Start Automated Trading</h3>
+                <p className="text-sm text-gray-300 mb-4">
+                  Our AI-powered trading system will analyze market conditions and execute trades automatically based on your settings.
+                </p>
                 <Button
-                  onClick={handleAccountConfirm}
-                  className="bg-green-600 hover:bg-green-700"
-                  disabled={isConnecting}
+                  onClick={() => handleTradingModeSelect('automated')}
+                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  disabled={isLoading}
                 >
-                  Confirm Selection
+                  {isLoading ? "Setting up..." : "Start Automated Trading"}
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-lg bg-blue-900/20 border border-blue-500 p-4">
+                  <h3 className="text-lg font-semibold text-blue-400 mb-2">Automated Trading Active</h3>
+                  <p className="text-sm text-gray-300">
+                    The automated trading system is now active and monitoring the market.
+                  </p>
+                </div>
+                
+                <div className="flex justify-between items-center">
+                  <Button
+                    onClick={() => window.location.href = '/dashboard/ea-configuration'}
+                    className="bg-gray-600 hover:bg-gray-700"
+                    disabled={isLoading}
+                  >
+                    Configure EA Settings
+                  </Button>
+                  <Button
+                    onClick={handleDisconnect}
+                    className="bg-red-600 hover:bg-red-700"
+                    disabled={isLoading}
+                  >
+                    Stop Trading & Disconnect
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            {(showAccountSelect || !isAccountConfirmed) && availableAccounts.length > 0 && (
+              <div className="mb-6">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-semibold">Select Trading Account</h3>
+                  {selectedAccount && !isAccountConfirmed && (
+                    <Button
+                      onClick={handleAccountConfirm}
+                      className="bg-green-600 hover:bg-green-700"
+                      disabled={isConnecting}
+                    >
+                      {isConnecting ? "Connecting..." : "Confirm Selection"}
+                    </Button>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  {availableAccounts.map((account) => (
+                    <button
+                      key={account.accountId}
+                      onClick={() => handleAccountSelect(account)}
+                      disabled={isConnecting}
+                      className={`w-full p-4 rounded-lg text-left transition-colors ${
+                        selectedAccount?.accountId === account.accountId
+                          ? 'bg-blue-600 hover:bg-blue-700'
+                          : 'bg-gray-700 hover:bg-gray-600'
+                      } ${isConnecting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="font-medium">Account ID: {account.accountId}</div>
+                      <div className="text-sm text-gray-300">Currency: {account.currency}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            <div className="space-y-4">
+              {isConnected ? (
+                <>
+                  <div className="rounded-lg bg-gray-700 p-4 mb-4">
+                    <div className="flex justify-between items-center mb-2">
+                      <h3 className="text-lg font-semibold">Connected Account Details</h3>
+                      <Button
+                        onClick={handleChangeAccount}
+                        className="bg-blue-600 hover:bg-blue-700"
+                        disabled={isLoading || connectionStatus === 'connecting'}
+                      >
+                        Change Account
+                      </Button>
+                    </div>
+                    <p className="text-sm text-gray-300">Account ID: {selectedAccount?.accountId || accountId}</p>
+                    <p className="text-sm text-gray-300">Currency: {selectedAccount?.currency}</p>
+                    <p className="text-sm text-gray-300">Server: {server}</p>
+                    <p className="text-sm text-gray-300">Markets: {markets.join(", ")}</p>
+                    <p className="text-sm text-gray-300">Leverage: {leverage}</p>
+                    <p className="text-sm text-gray-300">Active Symbols: {activeSymbols.length}</p>
+                  </div>
+                  
+                  <Button 
+                    onClick={handleDisconnect}
+                    className="w-full bg-red-600 hover:bg-red-700"
+                    disabled={isLoading || connectionStatus === 'connecting'}
+                  >
+                    {isLoading ? "Disconnecting..." : "Disconnect Account"}
+                  </Button>
+                </>
+              ) : (
+                <Button 
+                  onClick={handleDerivConnect}
+                  className="w-full"
+                  disabled={isLoading || connectionStatus === 'connecting'}
+                >
+                  {connectionStatus === 'connecting' ? "Connecting..." : "Connect Deriv Account"}
                 </Button>
               )}
             </div>
-            <div className="space-y-2">
-              {availableAccounts.map((account) => (
-                <button
-                  key={account.accountId}
-                  onClick={() => handleAccountSelect(account)}
-                  disabled={isConnecting}
-                  className={`w-full p-4 rounded-lg text-left transition-colors ${
-                    selectedAccount?.accountId === account.accountId
-                      ? 'bg-blue-600 hover:bg-blue-700'
-                      : 'bg-gray-700 hover:bg-gray-600'
-                  } ${isConnecting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <div className="font-medium">Account ID: {account.accountId}</div>
-                  <div className="text-sm text-gray-300">Currency: {account.currency}</div>
-                </button>
-              ))}
-            </div>
-          </div>
+          </>
         )}
-        
-        <div className="space-y-4">
-          {isConnected ? (
-            <>
-              <div className="rounded-lg bg-gray-700 p-4 mb-4">
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-lg font-semibold">Connected Account Details</h3>
-                  <Button
-                    onClick={handleChangeAccount}
-                    className="bg-blue-600 hover:bg-blue-700"
-                    disabled={isLoading || connectionStatus === 'connecting'}
-                  >
-                    Change Account
-                  </Button>
-                </div>
-                <p className="text-sm text-gray-300">Account ID: {selectedAccount?.accountId || accountId}</p>
-                <p className="text-sm text-gray-300">Currency: {selectedAccount?.currency}</p>
-                <p className="text-sm text-gray-300">Server: {server}</p>
-                <p className="text-sm text-gray-300">Markets: {markets.join(", ")}</p>
-                <p className="text-sm text-gray-300">Leverage: {leverage}</p>
-                <p className="text-sm text-gray-300">Active Symbols: {activeSymbols.length}</p>
-              </div>
-              
-              <Button 
-                onClick={handleDisconnect}
-                className="w-full bg-red-600 hover:bg-red-700"
-                disabled={isLoading || connectionStatus === 'connecting'}
-              >
-                {isLoading ? "Disconnecting..." : "Disconnect Account"}
-              </Button>
-            </>
-          ) : (
-            <Button 
-              onClick={handleDerivConnect}
-              className="w-full"
-              disabled={isLoading || connectionStatus === 'connecting'}
-            >
-              {connectionStatus === 'connecting' ? "Connecting..." : "Connect Deriv Account"}
-            </Button>
-          )}
-        </div>
       </CardContent>
     </Card>
   )
