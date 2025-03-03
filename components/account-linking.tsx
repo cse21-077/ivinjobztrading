@@ -250,10 +250,25 @@ export default function DerivAccountLinking() {
       // Add connection attempt timestamp
       const connectionStartTime = Date.now();
       
-      const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3');
+      // Get the app_id from the OAuth URL
+      const oauthUrl = getDerivOAuthUrl();
+      const appId = new URL(oauthUrl).searchParams.get('app_id');
+      
+      if (!appId) {
+        throw new Error('App ID not found in OAuth configuration');
+      }
+      
+      // Use the correct WebSocket URL with the proper app_id
+      const wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
+      console.log('Connecting to:', wsUrl);
+      
+      const ws = new WebSocket(wsUrl);
       
       // Add connection state tracking
       let connectionEstablished = false;
+      
+      // Add ping interval to keep connection alive
+      let pingInterval: NodeJS.Timeout;
       
       // Reduce timeout to 5 seconds for faster feedback
       const connectionTimeout = setTimeout(() => {
@@ -271,6 +286,13 @@ export default function DerivAccountLinking() {
         console.log(`2. WebSocket connection opened successfully (took ${connectionTime}ms)`);
         console.log('3. Sending authorization request to Deriv...');
         
+        // Set up ping interval to keep connection alive
+        pingInterval = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ ping: 1 }));
+          }
+        }, 30000); // Send ping every 30 seconds
+        
         const authMessage = {
           authorize: token,
           passthrough: { userId: user?.uid }
@@ -282,6 +304,12 @@ export default function DerivAccountLinking() {
         try {
           const response = JSON.parse(event.data);
           console.log('4. Received message from Deriv:', response.msg_type);
+          
+          // Handle ping response
+          if (response.msg_type === 'ping') {
+            console.log('Received ping response from server');
+            return;
+          }
           
           if (response.msg_type === 'authorize') {
             if (response.error) {
@@ -355,12 +383,16 @@ export default function DerivAccountLinking() {
         if (!connectionEstablished) {
           console.error('Connection failed before establishment');
           setIsConnecting(false);
-          handleConnectionError('Failed to establish connection to Deriv', token);
+          handleConnectionError('Failed to establish connection to Deriv. Please check your internet connection and try again.', token);
         }
       };
 
       ws.onclose = (event) => {
         console.log('WebSocket connection to Deriv closed:', event.code, event.reason);
+        // Clear ping interval
+        if (pingInterval) {
+          clearInterval(pingInterval);
+        }
         setIsConnecting(false);
         if (!connectionEstablished) {
           handleConnectionClose();
@@ -373,7 +405,7 @@ export default function DerivAccountLinking() {
       console.error('Connection establishment error:', error);
       setIsConnecting(false);
       setConnectionStatus('disconnected');
-      handleConnectionError('Failed to establish connection to Deriv', token);
+      handleConnectionError('Failed to establish connection to Deriv. Please try again.', token);
       return null;
     }
   }, [user, handleConnectionClose, handleSymbolsResponse, updateAccountStatus, handleConnectionError, isConnecting]);
