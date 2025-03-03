@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthState } from "react-firebase-hooks/auth";
@@ -7,7 +8,18 @@ import { auth } from "@/lib/firebase";
 import { handleOAuthRedirect, parseOAuthRedirect } from "@/lib/deriv-oauth";
 import { toast } from "sonner";
 
-export default function OAuthRedirect() {
+function LoadingComponent() {
+  return (
+    <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+      <div className="text-white text-center">
+        <h1 className="text-2xl mb-4">Connecting your Deriv account...</h1>
+        <p className="text-gray-400">Please wait while we process your connection.</p>
+      </div>
+    </div>
+  );
+}
+
+function OAuthRedirectContent() {
   const router = useRouter();
   const [user] = useAuthState(auth);
   const searchParams = useSearchParams();
@@ -46,12 +58,13 @@ export default function OAuthRedirect() {
     handleRedirect();
   }, [user, router, searchParams]);
 
+  return <LoadingComponent />;
+}
+
+export default function OAuthRedirect() {
   return (
-    <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-      <div className="text-white text-center">
-        <h1 className="text-2xl mb-4">Connecting your Deriv account...</h1>
-        <p className="text-gray-400">Please wait while we process your connection.</p>
-      </div>
-    </div>
+    <Suspense fallback={<LoadingComponent />}>
+      <OAuthRedirectContent />
+    </Suspense>
   );
 } 
