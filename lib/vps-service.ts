@@ -8,22 +8,22 @@ export class VPSService {
 
   constructor() {
     this.ec2Client = new EC2Client({
-      region: process.env.AWS_REGION,
+      region: process.env.VPS_REGION,
       credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!
+        accessKeyId: process.env.VPS_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.VPS_SECRET_ACCESS_KEY!
       }
     });
 
     this.ssmClient = new SSMClient({
-      region: process.env.AWS_REGION,
+      region: process.env.VPS_REGION,
       credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!
+        accessKeyId: process.env.VPS_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.VPS_SECRET_ACCESS_KEY!
       }
     });
 
-    this.instanceId = process.env.AWS_INSTANCE_ID!;
+    this.instanceId = process.env.VPS_INSTANCE_ID!;
   }
 
   private async checkInstanceStatus(): Promise<'running' | 'stopped' | 'pending' | 'error'> {
