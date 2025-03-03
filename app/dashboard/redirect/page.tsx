@@ -4,7 +4,8 @@ import { Suspense } from "react";
 import { useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthState } from "react-firebase-hooks/auth";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
+import { doc, setDoc } from "firebase/firestore";
 import { handleOAuthRedirect, parseOAuthRedirect } from "@/lib/deriv-oauth";
 import { toast } from "sonner";
 
@@ -43,6 +44,17 @@ function OAuthRedirectContent() {
         const result = await handleOAuthRedirect(user.uid, accounts);
         
         if (result.success) {
+          // Update Firestore with connection status and default settings
+          await setDoc(doc(db, "derivConfigs", user.uid), {
+            isConnected: true,
+            lastConnected: new Date(),
+            server: "svg-real", // Default to SVG Real server
+            accountId: accounts[0].accountId,
+            selectedSymbols: [], // Initialize empty symbols array
+            markets: ["forex", "synthetic_indices"], // Default markets
+            leverage: "1:500" // Default leverage
+          }, { merge: true });
+
           toast.success("Successfully connected your Deriv account!");
           router.push("/dashboard");
         } else {

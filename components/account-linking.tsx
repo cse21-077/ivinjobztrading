@@ -22,12 +22,34 @@ const DERIV_SERVERS = [
   { id: "svg-server-03", name: "SVG-Server 03", description: "SVG Backup Server" }
 ]
 
-const DERIV_MARKETS = [
-  { value: "forex", label: "Forex" },
-  { value: "synthetic_indices", label: "Synthetic Indices" },
-  { value: "commodities", label: "Commodities" },
-  { value: "cryptocurrencies", label: "Cryptocurrencies" }
-]
+// Trading pairs by category
+const TRADING_PAIRS = {
+  forex: [
+    { value: "EURUSD", label: "EUR/USD" },
+    { value: "GBPUSD", label: "GBP/USD" },
+    { value: "USDJPY", label: "USD/JPY" },
+    { value: "AUDUSD", label: "AUD/USD" },
+    { value: "USDCAD", label: "USD/CAD" },
+    { value: "NZDUSD", label: "NZD/USD" }
+  ],
+  synthetic_indices: [
+    { value: "R_10", label: "Volatility 10 Index" },
+    { value: "R_25", label: "Volatility 25 Index" },
+    { value: "R_50", label: "Volatility 50 Index" },
+    { value: "R_75", label: "Volatility 75 Index" },
+    { value: "R_100", label: "Volatility 100 Index" }
+  ],
+  commodities: [
+    { value: "XAUUSD", label: "Gold/USD" },
+    { value: "XAGUSD", label: "Silver/USD" },
+    { value: "WTICASH", label: "Oil/USD" }
+  ],
+  cryptocurrencies: [
+    { value: "BTCUSD", label: "Bitcoin/USD" },
+    { value: "ETHUSD", label: "Ethereum/USD" },
+    { value: "LTCUSD", label: "Litecoin/USD" }
+  ]
+}
 
 // Leverage options
 const LEVERAGE_OPTIONS = ["1:50", "1:100", "1:200", "1:500", "1:1000"]
@@ -73,6 +95,7 @@ export default function DerivAccountLinking() {
   const [mt5Server, setMt5Server] = useState("")
   const [mt5Login, setMt5Login] = useState("")
   const [mt5Password, setMt5Password] = useState("")
+  const [selectedCategory, setSelectedCategory] = useState<string>("")
 
   useEffect(() => {
     const fetchUserConfig = async () => {
@@ -295,26 +318,46 @@ export default function DerivAccountLinking() {
               </div>
               
               <div className="rounded-lg bg-gray-700 p-4 mb-4">
-                <h3 className="text-lg font-semibold mb-2">Trading Symbols</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {DERIV_MARKETS.map((market) => (
-                    <div key={market.value} className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id={market.value}
-                        checked={selectedSymbols.includes(market.value)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedSymbols([...selectedSymbols, market.value]);
-                          } else {
-                            setSelectedSymbols(selectedSymbols.filter(s => s !== market.value));
-                          }
-                        }}
-                        className="rounded border-gray-600"
-                      />
-                      <label htmlFor={market.value}>{market.label}</label>
+                <h3 className="text-lg font-semibold mb-2">Trading Pairs</h3>
+                <div className="space-y-4">
+                  <Select
+                    value={selectedCategory}
+                    onValueChange={setSelectedCategory}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select market category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.keys(TRADING_PAIRS).map((category) => (
+                        <SelectItem key={category} value={category}>
+                          {category.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {selectedCategory && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {TRADING_PAIRS[selectedCategory as keyof typeof TRADING_PAIRS].map((pair) => (
+                        <div key={pair.value} className="flex items-center space-x-2">
+                          <input
+                            type="checkbox"
+                            id={pair.value}
+                            checked={selectedSymbols.includes(pair.value)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedSymbols([...selectedSymbols, pair.value]);
+                              } else {
+                                setSelectedSymbols(selectedSymbols.filter(s => s !== pair.value));
+                              }
+                            }}
+                            className="rounded border-gray-600"
+                          />
+                          <label htmlFor={pair.value} className="text-sm">{pair.label}</label>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
               
