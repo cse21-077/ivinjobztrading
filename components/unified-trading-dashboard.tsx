@@ -1,19 +1,18 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect, useCallback } from "react"
+import { useState, useCallback } from "react"
 import { useAuthState } from "react-firebase-hooks/auth"
-import { doc, getDoc, setDoc } from "firebase/firestore"
-import { auth, db } from "@/lib/firebase"
+import { auth } from "@/lib/firebase"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
 import { AlertCircle, Check, Loader2 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import { getDerivOAuthUrl } from "@/lib/deriv-oauth"
+import { useDerivAccount } from "@/hooks/use-deriv"
 
 interface TradingPair {
   symbol: string;
@@ -49,10 +48,18 @@ const LOT_SIZES = [
 
 const EA_NAME = "The Arm"
 
-export default function EAConfiguration() {
+export default function UnifiedTradingDashboard() {
   const [user] = useAuthState(auth)
-  const [availableAccounts, setAvailableAccounts] = useState<DerivAccount[]>([])
-  const [selectedAccount, setSelectedAccount] = useState<DerivAccount | null>(null)
+  const { 
+    availableAccounts, 
+    activeAccount,
+    selectedAccountId,
+    isConnected,
+    isLoading: isLoadingAccounts,
+    error: accountError,
+    connectToAccount
+  } = useDerivAccount()
+  
   const [selectedMarket, setSelectedMarket] = useState<string>("synthetic_indices")
   const [selectedPair, setSelectedPair] = useState<string>("1HZ75V")
   const [lotSize, setLotSize] = useState<string>("0.01")
@@ -60,89 +67,41 @@ export default function EAConfiguration() {
   const [availableMarkets, setAvailableMarkets] = useState<string[]>([])
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
   const [tradingActive, setTradingActive] = useState(false)
-  const [wsConnection, setWsConnection] = useState<WebSocket | null>(null)
-
-  // Fetch available accounts on mount
-  useEffect(() => {
-    const fetchAccounts = async () => {
-      if (!user) return;
-      
-      try {
-        setIsLoading(true);
-        const accountsRef = doc(db, "derivAccounts", user.uid);
-        const accountsSnap = await getDoc(accountsRef);
-        
-        if (accountsSnap.exists()) {
-          const accounts = accountsSnap.data().accounts;
-          if (accounts && accounts.length > 0) {
-            setAvailableAccounts(accounts);
-            
-            // Check for saved configuration
-            const configRef = doc(db, "derivConfigs", user.uid);
-            const configSnap = await getDoc(configRef);
-            const savedConfig = configSnap.exists() ? configSnap.data() : null;
-            
-            if (savedConfig?.selectedAccountId) {
-              const savedAccount = accounts.find((acc: DerivAccount) => 
-                acc.accountId === savedConfig.selectedAccountId
-              );
-              
-              if (savedAccount) {
-                setSelectedAccount(savedAccount);
-                if (savedConfig.eaConfig) {
-                  setSelectedMarket(savedConfig.eaConfig.market);
-                  setSelectedPair(savedConfig.eaConfig.pairs[0]);
-                  setLotSize(savedConfig.eaConfig.lotSize);
-                }
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching accounts:", error);
-        toast.error("Failed to load your Deriv accounts");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchAccounts();
-  }, [user]);
 
   // Update available markets based on account type
-  useEffect(() => {
-    if (!selectedAccount) return;
+  const handleAccountSelect = useCallback(async (account: DerivAccount) => {
+    try {
+      await connectToAccount(account.accountId);
+      setConnectionStatus('disconnected');
+      setTradingActive(false);
 
-    const accountType = selectedAccount.type || 'standard';
-    
-    switch(accountType) {
-      case 'financial':
-        setAvailableMarkets(['forex']);
-        setSelectedMarket('forex');
-        setSelectedPair('frxEURUSD');
-        break;
-      case 'synthetic':
-        setAvailableMarkets(['synthetic_indices']);
-        setSelectedMarket('synthetic_indices');
-        setSelectedPair('1HZ75V');
-        break;
-      case 'standard':
-        setAvailableMarkets(['forex', 'synthetic_indices']);
-        break;
-      default:
-        setAvailableMarkets(['synthetic_indices', 'forex']);
+      const accountType = account.type || 'standard';
+      
+      switch(accountType) {
+        case 'financial':
+          setAvailableMarkets(['forex']);
+          setSelectedMarket('forex');
+          setSelectedPair('frxEURUSD');
+          break;
+        case 'synthetic':
+          setAvailableMarkets(['synthetic_indices']);
+          setSelectedMarket('synthetic_indices');
+          setSelectedPair('1HZ75V');
+          break;
+        case 'standard':
+          setAvailableMarkets(['forex', 'synthetic_indices']);
+          break;
+        default:
+          setAvailableMarkets(['synthetic_indices', 'forex']);
+      }
+    } catch (error) {
+      toast.error("Failed to connect to account");
     }
-  }, [selectedAccount]);
-
-  const handleAccountSelect = useCallback((account: DerivAccount) => {
-    setSelectedAccount(account);
-    setConnectionStatus('disconnected');
-    setTradingActive(false);
-  }, []);
+  }, [connectToAccount]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !selectedAccount) {
+    if (!user || !activeAccount) {
       toast.error("Please select a Deriv account first");
       return;
     }
@@ -150,24 +109,14 @@ export default function EAConfiguration() {
     setIsLoading(true);
     try {
       const eaConfig = {
-        server: selectedAccount.server || 'demo',
+        server: activeAccount.server || 'demo',
         eaName: EA_NAME,
         pairs: [selectedPair],
-          lotSize,
+        lotSize,
         market: selectedMarket
       };
 
-      // Save to derivConfigs for VPS connection
-      const derivConfigRef = doc(db, "derivConfigs", user.uid);
-      await setDoc(derivConfigRef, {
-        selectedAccountId: selectedAccount.accountId,
-        eaConfig,
-        lastUpdated: new Date(),
-        status: 'ready_to_connect',
-        derivToken: selectedAccount.token
-      }, { merge: true });
-
-      // Make the VPS connection request
+      // Make the VPS connection request with live data
       const response = await fetch('/api/vps/connect', {
         method: 'POST',
         headers: {
@@ -175,8 +124,8 @@ export default function EAConfiguration() {
         },
         body: JSON.stringify({
           userId: user.uid,
-          accountId: selectedAccount.accountId,
-          derivToken: selectedAccount.token,
+          accountId: activeAccount.accountId,
+          derivToken: activeAccount.token,
           eaConfig
         })
       });
@@ -191,23 +140,12 @@ export default function EAConfiguration() {
         throw new Error(vpsResult.error || "Failed to connect to VPS");
       }
 
-      // Save EA configuration
-      await setDoc(doc(db, "eaConfigs", user.uid), {
-        market: selectedMarket,
-        pair: selectedPair,
-        lotSize,
-        eaName: EA_NAME,
-        server: selectedAccount.server || 'demo',
-        lastUpdated: new Date(),
-        status: 'connected'
-      });
-
       setTradingActive(true);
       setConnectionStatus('connected');
-      toast.success("Trading configuration saved and connected to VPS!");
+      toast.success("Successfully connected to VPS and started trading!");
     } catch (error: any) {
       console.error("Error:", error);
-      toast.error(error.message || "Failed to save configuration");
+      toast.error(error.message || "Failed to connect to VPS");
     } finally {
       setIsLoading(false);
     }
@@ -215,20 +153,38 @@ export default function EAConfiguration() {
 
   const handleDerivConnect = useCallback(() => {
     const oauthUrl = getDerivOAuthUrl();
-    if (user) {
-      setDoc(doc(db, "derivConfigs", user.uid), {
-        connectionAttempt: new Date(),
-        status: 'connecting'
-      }, { merge: true });
-    }
     window.location.href = oauthUrl;
-  }, [user]);
+  }, []);
 
   const getCurrentPairDisplay = () => {
     return TRADING_PAIRS[selectedMarket]?.find(p => p.symbol === selectedPair)?.display_name || "Select pair";
   };
 
-  if (availableAccounts.length === 0) {
+  if (isLoadingAccounts) {
+    return (
+      <Card className="bg-gray-800 text-gray-200">
+        <CardContent className="flex items-center justify-center p-8">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (accountError) {
+    return (
+      <Card className="bg-gray-800 text-gray-200">
+        <CardContent className="p-8">
+          <Alert className="bg-red-900/20 border-red-500">
+            <AlertCircle className="h-4 w-4 text-red-500" />
+            <AlertTitle>Error Loading Accounts</AlertTitle>
+            <AlertDescription>{accountError}</AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!availableAccounts || availableAccounts.length === 0) {
     return (
       <Card className="bg-gray-800 text-gray-200">
         <CardHeader className="px-4 sm:px-6">
@@ -281,7 +237,7 @@ export default function EAConfiguration() {
                   onClick={() => handleAccountSelect(account)}
                   disabled={isLoading}
                   className={`w-full p-4 rounded-lg text-left transition-colors ${
-                    selectedAccount?.accountId === account.accountId
+                    selectedAccountId === account.accountId
                       ? 'bg-blue-600 hover:bg-blue-700'
                       : 'bg-gray-700 hover:bg-gray-600'
                   } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -291,12 +247,18 @@ export default function EAConfiguration() {
                   {account.type && (
                     <div className="text-sm text-gray-300">Type: {account.type}</div>
                   )}
+                  {selectedAccountId === account.accountId && isConnected && (
+                    <div className="text-sm text-green-400 mt-1">
+                      <Check className="h-4 w-4 inline-block mr-1" />
+                      Connected
+                    </div>
+                  )}
                 </button>
               ))}
             </div>
           </div>
 
-          {selectedAccount && (
+          {activeAccount && (
             <>
               {availableMarkets.length > 1 && (
                 <div className="space-y-2">
@@ -323,7 +285,7 @@ export default function EAConfiguration() {
                 </div>
               )}
 
-          <div className="space-y-2">
+              <div className="space-y-2">
                 <Label htmlFor="pair">Trading Pair</Label>
                 <Select 
                   value={selectedPair}
@@ -333,21 +295,21 @@ export default function EAConfiguration() {
                     <SelectValue placeholder="Select trading pair">
                       {getCurrentPairDisplay()}
                     </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
+                  </SelectTrigger>
+                  <SelectContent>
                     {TRADING_PAIRS[selectedMarket]?.map((pair) => (
                       <SelectItem key={pair.symbol} value={pair.symbol}>
                         {pair.display_name}
                       </SelectItem>
                     ))}
-              </SelectContent>
-            </Select>
-          </div>
+                  </SelectContent>
+                </Select>
+              </div>
 
-          <div className="space-y-2">
+              <div className="space-y-2">
                 <Label htmlFor="lotSize">Lot Size</Label>
                 <Select 
-              value={lotSize}
+                  value={lotSize}
                   onValueChange={setLotSize}
                 >
                   <SelectTrigger id="lotSize" className="w-full bg-gray-700 border-gray-600">
@@ -361,12 +323,12 @@ export default function EAConfiguration() {
                     ))}
                   </SelectContent>
                 </Select>
-          </div>
+              </div>
 
               <Button 
                 type="submit" 
                 className="w-full bg-green-600 hover:bg-green-700" 
-                disabled={isLoading}
+                disabled={isLoading || !isConnected}
               >
                 {isLoading ? (
                   <>
@@ -378,10 +340,12 @@ export default function EAConfiguration() {
                     <Check className="mr-2 h-4 w-4" />
                     Trading Active
                   </>
+                ) : !isConnected ? (
+                  "Connect Account First"
                 ) : (
                   "Start Trading"
                 )}
-          </Button>
+              </Button>
             </>
           )}
         </form>
@@ -402,5 +366,4 @@ export default function EAConfiguration() {
       </CardContent>
     </Card>
   );
-}
-
+} 

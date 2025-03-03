@@ -1,21 +1,14 @@
-import AccountLinking from "@/components/account-linking"
-import DashboardHeader from "@/components/dashboard-header"
-import EAConfiguration from "@/components/ea-configuration"
-import RouteGuard from "@/components/route-guard"
+"use client"
+
+import UnifiedTradingDashboard from "@/components/unified-trading-dashboard"
 
 export default function DashboardPage() {
   return (
-    <RouteGuard>
-      <div className="min-h-screen bg-gray-900 text-white">
-        <DashboardHeader />
-        <main className="p-4 sm:p-6 md:p-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 md:gap-8">
-            <AccountLinking />
-            <EAConfiguration />
-          </div>
-        </main>
+    <div className="min-h-screen bg-gray-900 text-white">
+      <div className="container mx-auto p-4 sm:p-6 lg:p-8">
+        <UnifiedTradingDashboard />
       </div>
-    </RouteGuard>
+    </div>
   )
 }
 

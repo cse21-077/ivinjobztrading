@@ -508,7 +508,7 @@ export default function DerivAccountLinking() {
           setActiveSymbols(savedConfig.activeSymbols || []);
         }
         console.log('7. Configuration fetch completed');
-      } catch (error) {
+        } catch (error) {
         console.error("Error fetching config:", error);
         if (mounted) {
           toast.error("Error retrieving configuration");
@@ -789,8 +789,8 @@ export default function DerivAccountLinking() {
             <div className="rounded-lg bg-green-900/20 border border-green-500 p-4">
               <h3 className="text-lg font-semibold text-green-400 mb-2">Connection Successful!</h3>
               <p className="text-sm text-gray-300">Your Deriv account is now connected to our automated trading system.</p>
-            </div>
-
+          </div>
+          
             {!tradingMode ? (
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold">Start Automated Trading</h3>
@@ -811,9 +811,9 @@ export default function DerivAccountLinking() {
                   <h3 className="text-lg font-semibold text-blue-400 mb-2">Automated Trading Active</h3>
                   <p className="text-sm text-gray-300">
                     The automated trading system is now active and monitoring the market.
-                  </p>
-                </div>
-                
+            </p>
+          </div>
+          
                 <div className="flex justify-between items-center">
                   <Button
                     onClick={() => window.location.href = '/dashboard/ea-configuration'}
@@ -864,9 +864,9 @@ export default function DerivAccountLinking() {
                       <div className="font-medium">Account ID: {account.accountId}</div>
                       <div className="text-sm text-gray-300">Currency: {account.currency}</div>
                     </button>
-                  ))}
-                </div>
-              </div>
+              ))}
+            </div>
+          </div>
             )}
             
             <div className="space-y-4">
@@ -882,31 +882,31 @@ export default function DerivAccountLinking() {
                       >
                         Change Account
                       </Button>
-                    </div>
+          </div>
                     <p className="text-sm text-gray-300">Account ID: {selectedAccount?.accountId || accountId}</p>
                     <p className="text-sm text-gray-300">Currency: {selectedAccount?.currency}</p>
                     <p className="text-sm text-gray-300">Server: {server}</p>
                     <p className="text-sm text-gray-300">Markets: {markets.join(", ")}</p>
                     <p className="text-sm text-gray-300">Leverage: {leverage}</p>
                     <p className="text-sm text-gray-300">Active Symbols: {activeSymbols.length}</p>
-                  </div>
-                  
-                  <Button 
+          </div>
+          
+          <Button 
                     onClick={handleDisconnect}
                     className="w-full bg-red-600 hover:bg-red-700"
                     disabled={isLoading || connectionStatus === 'connecting'}
                   >
                     {isLoading ? "Disconnecting..." : "Disconnect Account"}
-                  </Button>
+          </Button>
                 </>
               ) : (
-                <Button 
+          <Button 
                   onClick={handleDerivConnect}
-                  className="w-full"
+            className="w-full" 
                   disabled={isLoading || connectionStatus === 'connecting'}
-                >
+          >
                   {connectionStatus === 'connecting' ? "Connecting..." : "Connect Deriv Account"}
-                </Button>
+          </Button>
               )}
             </div>
           </>

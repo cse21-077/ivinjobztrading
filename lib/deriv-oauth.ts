@@ -2,10 +2,17 @@ import { doc, setDoc } from "firebase/firestore";
 import { db } from "./firebase";
 
 const DERIV_APP_ID = "69299";
-const REDIRECT_URL = "https://thearmbyivinjobz.netlify.app/dashboard/redirect";
+
+const REDIRECT_URLS = {
+  development: "http://localhost:3000/dashboard/redirect",
+  production: "https://thearmbyivinjobz.netlify.app/dashboard/redirect"
+};
 
 export const getDerivOAuthUrl = () => {
-  return `https://oauth.deriv.com/oauth2/authorize?app_id=${DERIV_APP_ID}&l=EN&redirect_uri=${encodeURIComponent(REDIRECT_URL)}`;
+  const isDevelopment = process.env.NODE_ENV === "development";
+  const redirectUrl = isDevelopment ? REDIRECT_URLS.development : REDIRECT_URLS.production;
+  
+  return `https://oauth.deriv.com/oauth2/authorize?app_id=${DERIV_APP_ID}&l=EN&redirect_uri=${encodeURIComponent(redirectUrl)}`;
 };
 
 export interface DerivAccount {
