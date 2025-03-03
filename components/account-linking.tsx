@@ -104,25 +104,38 @@ export default function DerivAccountLinking() {
 
   useEffect(() => {
     let mounted = true;
-    const wsInstance: WebSocket | null = null;
 
     const fetchUserConfig = async () => {
       if (user && mounted) {
         try {
+          // First check for OAuth tokens
+          const accountsRef = doc(db, "derivAccounts", user.uid);
+          const accountsSnap = await getDoc(accountsRef);
+          
+          if (accountsSnap.exists()) {
+            const accounts = accountsSnap.data().accounts;
+            if (accounts && accounts.length > 0) {
+              // Use the first account's token to establish WebSocket connection
+              const token = accounts[0].token;
+              if (token && !wsConnection) {
+                const ws = establishWebSocketConnection(token);
+                if (ws) {
+                  setApiToken(token);
+                  setAccountId(accounts[0].accountId);
+                }
+              }
+            }
+          }
+
+          // Then fetch other config
           const docRef = doc(db, "derivConfigs", user.uid)
           const docSnap = await getDoc(docRef)
           if (docSnap.exists()) {
             const data = docSnap.data() as DerivConfig
-            // Only set the saved configuration, don't auto-connect
-            setApiToken(data.apiToken || "")
             setServer(data.server || "")
-            setAccountId(data.accountId || "")
             setMarkets(data.markets || [])
             setLeverage(data.leverage || "")
             setActiveSymbols(data.activeSymbols || [])
-            // Set initial status as disconnected
-            setIsConnected(false)
-            setConnectionStatus('disconnected')
           }
         } catch (error) {
           console.error("Error fetching config:", error)
@@ -146,10 +159,11 @@ export default function DerivAccountLinking() {
   const establishWebSocketConnection = (token: string) => {
     try {
       setConnectionStatus('connecting');
-      const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3');
+      // Use SVG WebSocket endpoint
+      const ws = new WebSocket('wss://ws.svg.deriv.com/websockets/v3');
       
       ws.onopen = () => {
-        console.log('WebSocket connection established');
+        console.log('WebSocket connection established to SVG server');
         ws.send(JSON.stringify({
           authorize: token,
           passthrough: { userId: user?.uid }
@@ -158,22 +172,25 @@ export default function DerivAccountLinking() {
 
       ws.onmessage = (event) => {
         const response = JSON.parse(event.data);
+        console.log('WebSocket message received:', response); // Add logging
         
         if (response.msg_type === 'authorize') {
           if (response.error) {
+            console.error('Authorization error:', response.error);
             handleConnectionError(response.error.message);
           } else {
+            console.log('Successfully authorized with SVG server');
             setConnectionStatus('connected');
             setIsConnected(true);
-            toast.success('Successfully connected to Deriv');
+            toast.success('Successfully connected to Deriv SVG');
             
-            // Request available symbols
+            // Request available symbols for SVG
             ws.send(JSON.stringify({
               active_symbols: "brief",
-              product_type: "basic"
+              product_type: "mt5"  // Changed to mt5 for SVG
             }));
 
-            // Subscribe to account status and balance
+            // Subscribe to account status
             ws.send(JSON.stringify({
               account_status: 1,
               subscribe: 1
@@ -182,6 +199,7 @@ export default function DerivAccountLinking() {
         }
         
         if (response.msg_type === 'active_symbols') {
+          console.log('Received symbols:', response.active_symbols?.length);
           handleSymbolsResponse(response.active_symbols as DerivSymbol[]);
         }
 
@@ -192,18 +210,19 @@ export default function DerivAccountLinking() {
 
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
-        handleConnectionError('Connection error occurred');
+        handleConnectionError('Connection error occurred with SVG server');
       };
 
       ws.onclose = () => {
-        console.log('WebSocket connection closed');
+        console.log('WebSocket connection to SVG server closed');
         handleConnectionClose();
       };
 
       setWsConnection(ws);
       return ws;
     } catch (error) {
-      handleConnectionError('Failed to establish connection');
+      console.error('Connection establishment error:', error);
+      handleConnectionError('Failed to establish connection to SVG server');
       return null;
     }
   };
