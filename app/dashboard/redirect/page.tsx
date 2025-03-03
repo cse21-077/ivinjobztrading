@@ -26,7 +26,9 @@ function OAuthRedirectContent() {
 
   useEffect(() => {
     const handleRedirect = async () => {
+      console.log('Starting OAuth redirect handling...');
       if (!user) {
+        console.error('No user found, redirecting to login');
         toast.error("Please log in first");
         router.push("/login");
         return;
@@ -34,18 +36,24 @@ function OAuthRedirectContent() {
 
       try {
         const url = window.location.href;
+        console.log('Processing redirect URL:', url);
         const accounts = parseOAuthRedirect(url);
+        console.log('Parsed accounts:', accounts);
         
         if (accounts.length === 0) {
+          console.error('No accounts found in redirect URL');
           throw new Error("No accounts found in redirect URL");
         }
 
+        console.log('Storing accounts in Firestore...');
         const result = await handleOAuthRedirect(user.uid, accounts);
         
         if (result.success) {
+          console.log('Successfully stored Deriv accounts');
           toast.success("Successfully connected your Deriv account!");
           router.push("/dashboard");
         } else {
+          console.error('Failed to store accounts:', result.error);
           throw new Error(result.error);
         }
       } catch (error) {

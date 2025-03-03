@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useAuthState } from "react-firebase-hooks/auth"
 import { doc, getDoc, setDoc } from "firebase/firestore"
 import { auth, db } from "@/lib/firebase"
@@ -102,29 +102,209 @@ export default function DerivAccountLinking() {
   const [retryCount, setRetryCount] = useState(0)
   const MAX_RETRIES = 3
 
+  const handleDisconnect = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      
+      if (wsConnection) {
+        wsConnection.close();
+      }
+
+      const response = await fetch('/api/mt5/disconnect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId: user?.uid })
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        if (user) {
+          await setDoc(doc(db, "derivConfigs", user.uid), {
+            isConnected: false,
+            lastDisconnected: new Date(),
+            status: 'disconnected',
+            activeSymbols: []
+          }, { merge: true });
+          
+          setIsConnected(false);
+          setApiToken("");
+          setServer("");
+          setAccountId("");
+          setMarkets([]);
+          setLeverage("");
+          setActiveSymbols([]);
+          toast.success("Successfully disconnected your trading account");
+        }
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      console.error("Error disconnecting:", error);
+      toast.error("Failed to disconnect your account");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user, wsConnection]);
+
+  const handleConnectionError = useCallback((message: string) => {
+    toast.error(message);
+    if (retryCount < MAX_RETRIES) {
+      setRetryCount(prev => prev + 1);
+      setTimeout(() => {
+        toast.info('Retrying connection...');
+        establishWebSocketConnection(apiToken);
+      }, 2000 * Math.pow(2, retryCount));
+    } else {
+      setConnectionStatus('disconnected');
+      handleDisconnect();
+    }
+  }, [retryCount, MAX_RETRIES, apiToken, handleDisconnect]);
+
+  const handleConnectionClose = useCallback(() => {
+    setIsConnected(false);
+    setConnectionStatus('disconnected');
+    if (retryCount < MAX_RETRIES) {
+      handleConnectionError('Connection closed unexpectedly');
+    }
+  }, [retryCount, MAX_RETRIES, handleConnectionError]);
+
+  const subscribeToSymbol = useCallback((symbol: string) => {
+    if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+      wsConnection.send(JSON.stringify({
+        ticks: symbol,
+        subscribe: 1
+      }));
+    }
+  }, [wsConnection]);
+
+  const handleSymbolsResponse = useCallback((symbols: DerivSymbol[]) => {
+    const availableSyms = symbols.map(s => s.symbol);
+    setAvailableSymbols(availableSyms);
+    
+    if (activeSymbols.length > 0) {
+      activeSymbols.forEach(symbol => {
+        if (availableSyms.includes(symbol)) {
+          subscribeToSymbol(symbol);
+        }
+      });
+    }
+  }, [activeSymbols, subscribeToSymbol]);
+
+  const updateAccountStatus = useCallback(async (status: DerivAccountStatus) => {
+    if (user) {
+      await setDoc(doc(db, "derivConfigs", user.uid), {
+        status: status.status,
+        lastUpdated: new Date(),
+        activeSymbols: activeSymbols,
+        balance: status.balance,
+        currency_config: status.currency_config
+      }, { merge: true });
+    }
+  }, [user, activeSymbols]);
+
+  const establishWebSocketConnection = useCallback((token: string) => {
+    try {
+      console.log('Starting WebSocket connection to Deriv...');
+      setConnectionStatus('connecting');
+      const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3');
+      
+      ws.onopen = () => {
+        console.log('WebSocket connection opened, authorizing with Deriv...');
+        const authMessage = {
+          authorize: token,
+          passthrough: { userId: user?.uid }
+        };
+        console.log('Sending authorization request...');
+        ws.send(JSON.stringify(authMessage));
+      };
+
+      ws.onmessage = (event) => {
+        const response = JSON.parse(event.data);
+        console.log('WebSocket message received:', response);
+        
+        if (response.msg_type === 'authorize') {
+          if (response.error) {
+            console.error('Deriv authorization error:', response.error);
+            handleConnectionError(response.error.message);
+          } else {
+            console.log('Successfully authorized with Deriv');
+            setConnectionStatus('connected');
+            setIsConnected(true);
+            toast.success('Successfully connected to Deriv');
+            
+            console.log('Requesting available trading symbols...');
+            ws.send(JSON.stringify({
+              active_symbols: "brief",
+              product_type: "mt5"
+            }));
+
+            console.log('Subscribing to account status...');
+            ws.send(JSON.stringify({
+              account_status: 1,
+              subscribe: 1
+            }));
+          }
+        }
+        
+        if (response.msg_type === 'active_symbols') {
+          console.log('Received trading symbols:', response.active_symbols?.length);
+          handleSymbolsResponse(response.active_symbols as DerivSymbol[]);
+        }
+
+        if (response.msg_type === 'account_status') {
+          console.log('Received account status:', response.status);
+          updateAccountStatus(response.status as DerivAccountStatus);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        handleConnectionError('Connection error occurred with Deriv');
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket connection to Deriv closed');
+        handleConnectionClose();
+      };
+
+      setWsConnection(ws);
+      return ws;
+    } catch (error) {
+      console.error('Connection establishment error:', error);
+      handleConnectionError('Failed to establish connection to Deriv');
+      return null;
+    }
+  }, [user, handleConnectionError, handleConnectionClose, handleSymbolsResponse, updateAccountStatus]);
+
   useEffect(() => {
     let mounted = true;
 
     const fetchUserConfig = async () => {
       if (user && mounted) {
         try {
+          console.log('Fetching user configuration...');
           // First check for OAuth tokens
           const accountsRef = doc(db, "derivAccounts", user.uid);
           const accountsSnap = await getDoc(accountsRef);
           
           if (accountsSnap.exists()) {
             const accounts = accountsSnap.data().accounts;
+            console.log('Found Deriv accounts:', accounts);
             if (accounts && accounts.length > 0) {
               // Use the first account's token to establish WebSocket connection
               const token = accounts[0].token;
+              console.log('Found token, establishing WebSocket connection...');
               if (token && !wsConnection) {
-                const ws = establishWebSocketConnection(token);
-                if (ws) {
-                  setApiToken(token);
-                  setAccountId(accounts[0].accountId);
-                }
+                establishWebSocketConnection(token);
+                setApiToken(token);
+                setAccountId(accounts[0].accountId);
               }
             }
+          } else {
+            console.log('No Deriv accounts found in Firestore');
           }
 
           // Then fetch other config
@@ -132,6 +312,7 @@ export default function DerivAccountLinking() {
           const docSnap = await getDoc(docRef)
           if (docSnap.exists()) {
             const data = docSnap.data() as DerivConfig
+            console.log('Found Deriv configuration:', data);
             setServer(data.server || "")
             setMarkets(data.markets || [])
             setLeverage(data.leverage || "")
@@ -154,135 +335,7 @@ export default function DerivAccountLinking() {
         wsConnection.close();
       }
     }
-  }, [user, wsConnection])
-
-  const establishWebSocketConnection = (token: string) => {
-    try {
-      setConnectionStatus('connecting');
-      // Use SVG WebSocket endpoint
-      const ws = new WebSocket('wss://ws.svg.deriv.com/websockets/v3');
-      
-      ws.onopen = () => {
-        console.log('WebSocket connection established to SVG server');
-        ws.send(JSON.stringify({
-          authorize: token,
-          passthrough: { userId: user?.uid }
-        }));
-      };
-
-      ws.onmessage = (event) => {
-        const response = JSON.parse(event.data);
-        console.log('WebSocket message received:', response); // Add logging
-        
-        if (response.msg_type === 'authorize') {
-          if (response.error) {
-            console.error('Authorization error:', response.error);
-            handleConnectionError(response.error.message);
-          } else {
-            console.log('Successfully authorized with SVG server');
-            setConnectionStatus('connected');
-            setIsConnected(true);
-            toast.success('Successfully connected to Deriv SVG');
-            
-            // Request available symbols for SVG
-            ws.send(JSON.stringify({
-              active_symbols: "brief",
-              product_type: "mt5"  // Changed to mt5 for SVG
-            }));
-
-            // Subscribe to account status
-            ws.send(JSON.stringify({
-              account_status: 1,
-              subscribe: 1
-            }));
-          }
-        }
-        
-        if (response.msg_type === 'active_symbols') {
-          console.log('Received symbols:', response.active_symbols?.length);
-          handleSymbolsResponse(response.active_symbols as DerivSymbol[]);
-        }
-
-        if (response.msg_type === 'account_status') {
-          updateAccountStatus(response.status as DerivAccountStatus);
-        }
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        handleConnectionError('Connection error occurred with SVG server');
-      };
-
-      ws.onclose = () => {
-        console.log('WebSocket connection to SVG server closed');
-        handleConnectionClose();
-      };
-
-      setWsConnection(ws);
-      return ws;
-    } catch (error) {
-      console.error('Connection establishment error:', error);
-      handleConnectionError('Failed to establish connection to SVG server');
-      return null;
-    }
-  };
-
-  const handleConnectionError = (message: string) => {
-    toast.error(message);
-    if (retryCount < MAX_RETRIES) {
-      setRetryCount(prev => prev + 1);
-      setTimeout(() => {
-        toast.info('Retrying connection...');
-        establishWebSocketConnection(apiToken);
-      }, 2000 * Math.pow(2, retryCount)); // Exponential backoff
-    } else {
-      setConnectionStatus('disconnected');
-      handleDisconnect();
-    }
-  };
-
-  const handleConnectionClose = () => {
-    setIsConnected(false);
-    setConnectionStatus('disconnected');
-    if (retryCount < MAX_RETRIES) {
-      handleConnectionError('Connection closed unexpectedly');
-    }
-  };
-
-  const handleSymbolsResponse = (symbols: DerivSymbol[]) => {
-    const availableSyms = symbols.map(s => s.symbol);
-    setAvailableSymbols(availableSyms);
-    
-    // Resubscribe to previously active symbols
-    if (activeSymbols.length > 0) {
-      activeSymbols.forEach(symbol => {
-        if (availableSyms.includes(symbol)) {
-          subscribeToSymbol(symbol);
-        }
-      });
-    }
-  };
-
-  const subscribeToSymbol = (symbol: string) => {
-    if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-      wsConnection.send(JSON.stringify({
-        ticks: symbol,
-        subscribe: 1
-      }));
-    }
-  };
-
-  const updateAccountStatus = async (status: DerivAccountStatus) => {
-    if (user) {
-      await setDoc(doc(db, "derivConfigs", user.uid), {
-        status: status.status,
-        lastUpdated: new Date(),
-        activeSymbols: activeSymbols,
-        balance: status.balance,
-        currency_config: status.currency_config
-      }, { merge: true });
-    }
-  };
+  }, [user, wsConnection, establishWebSocketConnection]);
 
   const handleMarketToggle = (market: string) => {
     setMarkets(prev => 
@@ -406,65 +459,21 @@ export default function DerivAccountLinking() {
   };
 
   const handleDerivConnect = () => {
+    console.log('Initiating Deriv connection...');
     const oauthUrl = getDerivOAuthUrl();
+    console.log('Redirecting to:', oauthUrl);
     // Store connection attempt in Firestore
     if (user) {
       setDoc(doc(db, "derivConfigs", user.uid), {
         connectionAttempt: new Date(),
         status: 'connecting'
-      }, { merge: true });
+      }, { merge: true }).then(() => {
+        console.log('Connection attempt stored in Firestore');
+      }).catch(error => {
+        console.error('Failed to store connection attempt:', error);
+      });
     }
     window.location.href = oauthUrl;
-  };
-
-  const handleDisconnect = async () => {
-    try {
-      setIsLoading(true);
-      
-      // Close WebSocket connection
-      if (wsConnection) {
-        wsConnection.close();
-      }
-
-      // Disconnect from AWS trading server
-      const response = await fetch('/api/mt5/disconnect', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ userId: user?.uid })
-      });
-
-      const result = await response.json();
-      
-      if (result.success) {
-        // Clear Firestore config
-        if (user) {
-          await setDoc(doc(db, "derivConfigs", user.uid), {
-            isConnected: false,
-            lastDisconnected: new Date(),
-            status: 'disconnected',
-            activeSymbols: []
-          }, { merge: true });
-          
-          setIsConnected(false);
-          setApiToken("");
-          setServer("");
-          setAccountId("");
-          setMarkets([]);
-          setLeverage("");
-          setActiveSymbols([]);
-          toast.success("Successfully disconnected your trading account");
-        }
-      } else {
-        throw new Error(result.error);
-      }
-    } catch (error) {
-      console.error("Error disconnecting:", error);
-      toast.error("Failed to disconnect your account");
-    } finally {
-      setIsLoading(false);
-    }
   };
 
   return (
