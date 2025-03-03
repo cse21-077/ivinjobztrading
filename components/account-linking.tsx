@@ -88,6 +88,14 @@ interface DerivAccount {
   currency: string;
 }
 
+type ConnectionErrorType = 
+  | 'network_error'
+  | 'auth_error'
+  | 'server_error'
+  | 'timeout'
+  | 'ea_config_error'
+  | 'unknown';
+
 export default function DerivAccountLinking() {
   const [user] = useAuthState(auth)
   const [apiToken, setApiToken] = useState("")
@@ -118,6 +126,65 @@ export default function DerivAccountLinking() {
   const [showSuccessScreen, setShowSuccessScreen] = useState(false)
   const [tradingMode, setTradingMode] = useState<'automated' | null>(null)
   const [showEaConfigDialog, setShowEaConfigDialog] = useState(false)
+  const [errorType, setErrorType] = useState<ConnectionErrorType | null>(null);
+
+  const getErrorMessage = (type: ConnectionErrorType): string => {
+    switch(type) {
+      case 'network_error':
+        return 'Network connection error. Please check your internet connection and try again.';
+      case 'auth_error':
+        return 'Authentication failed. Your Deriv token may have expired.';
+      case 'server_error':
+        return 'Deriv server error. Please try again later or contact support.';
+      case 'timeout':
+        return 'Connection timed out. Please try again.';
+      case 'ea_config_error':
+        return 'EA configuration is missing or invalid. Please set up your EA configuration first.';
+      case 'unknown':
+      default:
+        return 'An unexpected error occurred. Please try again or contact support.';
+    }
+  };
+
+  const getErrorRecoverySteps = (type: ConnectionErrorType): string[] => {
+    switch(type) {
+      case 'network_error':
+        return [
+          'Check your internet connection',
+          'Try refreshing the page',
+          'Ensure your firewall isn\'t blocking the connection'
+        ];
+      case 'auth_error':
+        return [
+          'Reconnect your Deriv account',
+          'Make sure you have the correct permissions'
+        ];
+      case 'server_error':
+        return [
+          'Try again in a few minutes',
+          'Check Deriv system status',
+          'Contact support if the issue persists'
+        ];
+      case 'timeout':
+        return [
+          'Check your internet speed',
+          'Try again when your connection is more stable'
+        ];
+      case 'ea_config_error':
+        return [
+          'Go to EA Configuration page',
+          'Set up your EA configuration properly',
+          'Ensure you\'ve selected valid trading pairs'
+        ];
+      case 'unknown':
+      default:
+        return [
+          'Refresh the page and try again',
+          'Clear your browser cache',
+          'Contact support with error details'
+        ];
+    }
+  };
 
   const handleDisconnect = useCallback(async () => {
     try {
@@ -175,8 +242,25 @@ export default function DerivAccountLinking() {
   const handleConnectionError = useCallback((message: string, token?: string) => {
     console.error('Connection error:', message);
     
+    // Determine error type based on message content
+    let errorType: ConnectionErrorType = 'unknown';
+    
+    if (message.includes('network') || message.includes('internet') || message.includes('WebSocket')) {
+      errorType = 'network_error';
+    } else if (message.includes('auth') || message.includes('token') || message.includes('authorize')) {
+      errorType = 'auth_error';
+    } else if (message.includes('server')) {
+      errorType = 'server_error';
+    } else if (message.includes('timeout') || message.includes('timed out')) {
+      errorType = 'timeout';
+    } else if (message.includes('EA configuration')) {
+      errorType = 'ea_config_error';
+    }
+    
+    setErrorType(errorType);
+    
     // Show dialog for EA configuration errors
-    if (message.includes('EA configuration not found')) {
+    if (errorType === 'ea_config_error') {
       setShowEaConfigDialog(true);
       return;
     }
@@ -452,7 +536,7 @@ export default function DerivAccountLinking() {
       handleConnectionError('Failed to establish connection to Deriv. Please try again.', token);
       return null;
     }
-  }, [user, handleConnectionClose, handleSymbolsResponse, updateAccountStatus, handleConnectionError, isConnecting]);
+  }, [user, handleConnectionClose, handleSymbolsResponse, updateAccountStatus, handleConnectionError, isConnecting, server]);
 
   useEffect(() => {
     let mounted = true;
@@ -785,7 +869,8 @@ export default function DerivAccountLinking() {
             onClick={() => {
               window.location.href = '/dashboard/ea-configuration';
             }}
-            className="bg-blue-600 hover:bg-blue-700 sm:order-2"
+            className="bg-blue-600 hover:bg-blue-700"
+            disabled={isLoading}
           >
             Configure EA Settings
           </Button>
@@ -941,6 +1026,35 @@ export default function DerivAccountLinking() {
           </>
         )}
       </CardContent>
+      {errorType && connectionStatus === 'disconnected' && (
+        <div className="mt-6 p-4 bg-red-900/20 border border-red-700 rounded-lg">
+          <h3 className="text-lg font-semibold text-red-400 mb-2">Connection Error</h3>
+          <p className="text-sm text-gray-300 mb-4">{getErrorMessage(errorType)}</p>
+          
+          <h4 className="text-sm font-medium text-gray-400 mb-2">Troubleshooting steps:</h4>
+          <ul className="list-disc list-inside text-sm text-gray-300 space-y-1">
+            {getErrorRecoverySteps(errorType).map((step, index) => (
+              <li key={index}>{step}</li>
+            ))}
+          </ul>
+          
+          <div className="mt-4 flex justify-end">
+            <Button 
+              variant="outline" 
+              className="mr-2"
+              onClick={() => setErrorType(null)}
+            >
+              Dismiss
+            </Button>
+            <Button 
+              onClick={handleDerivConnect}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              Try Again
+            </Button>
+          </div>
+        </div>
+      )}
       <EaConfigDialog />
     </Card>
   )

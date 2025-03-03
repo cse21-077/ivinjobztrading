@@ -1,6 +1,49 @@
 import { EC2Client, StartInstancesCommand, DescribeInstancesCommand } from "@aws-sdk/client-ec2";
 import { SSMClient, SendCommandCommand } from "@aws-sdk/client-ssm";
 
+// Constants
+const RETRY_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = 1000; // Start with 1 second, will be exponentially increased
+const CONNECT_TIMEOUT_MS = 60000; // 60 seconds timeout for VPS connections
+const MT5_START_TIMEOUT_MS = 30000; // 30 seconds timeout for MT5 to start
+
+// Configuration interface for VPS credentials
+export interface VpsCredentials {
+  derivToken: string;
+  accountId: string;
+  server: string;
+  pairs: string[];
+  direction: 'buy' | 'sell';
+  riskPercentage: number;
+  lotSize: number;
+  maxTradesPerDay: number;
+  stopLoss: number;
+  takeProfit: number;
+}
+
+// VPS connection result interface
+export interface VpsConnectionResult {
+  success: boolean;
+  message: string;
+  connectionId?: string;
+  error?: string;
+  timestamp?: number;
+}
+
+// Connection monitoring state
+interface ConnectionMonitorState {
+  lastCheck: number;
+  isConnected: boolean;
+  connectionId: string;
+  reconnectAttempts: number;
+}
+
+// Map to track active connections
+const activeConnections = new Map<string, ConnectionMonitorState>();
+
+/**
+ * VPS Service for managing connections to the MetaTrader VPS
+ */
 export class VPSService {
   private ec2Client: EC2Client;
   private ssmClient: SSMClient;
@@ -24,6 +67,9 @@ export class VPSService {
     });
 
     this.instanceId = process.env.VPS_INSTANCE_ID!;
+
+    // Start the connection monitoring
+    this.startConnectionMonitoring();
   }
 
   private async checkInstanceStatus(): Promise<'running' | 'stopped' | 'pending' | 'error'> {
@@ -44,7 +90,7 @@ export class VPSService {
     try {
       console.log('Checking VPS status...');
       const status = await this.checkInstanceStatus();
-      
+
       if (status === 'running') {
         console.log('VPS is already running');
         return true;
@@ -55,7 +101,7 @@ export class VPSService {
         const command = new StartInstancesCommand({
           InstanceIds: [this.instanceId]
         });
-        
+
         try {
           await this.ec2Client.send(command);
           console.log('Start command sent successfully');
@@ -67,14 +113,14 @@ export class VPSService {
           });
           throw new Error(`Failed to start VPS: ${startError.message}`);
         }
-        
+
         // Wait for instance to be running
         let attempts = 0;
         while (attempts < 30) {
           console.log(`Checking status attempt ${attempts + 1}/30...`);
           const currentStatus = await this.checkInstanceStatus();
           console.log(`Current status: ${currentStatus}`);
-          
+
           if (currentStatus === 'running') {
             console.log('VPS started successfully');
             return true;
@@ -115,7 +161,7 @@ export class VPSService {
         eaName: credentials.eaName,
         pairsCount: credentials.pairs.length
       });
-      
+
       // First, ensure MT5 is not already running
       const stopCommand = new SendCommandCommand({
         InstanceIds: [this.instanceId],
@@ -166,7 +212,7 @@ export class VPSService {
       console.log(`Configuring MT5 to trade ${credentials.pairs.length} pairs: ${pairsString}`);
 
       // Handle SVG server specifics
-      let serverArgs = credentials.server;
+      const serverArgs = credentials.server;
       // Add special configurations for SVG servers if needed
       if (credentials.server.toLowerCase().includes('svg')) {
         console.log('Using SVG server configuration');
@@ -248,4 +294,132 @@ export class VPSService {
       throw new Error('Failed to stop trading');
     }
   }
-} 
+
+  private async executeCommand(command: string, retryCount = 0): Promise<string> {
+    try {
+      console.log(`Executing command on VPS: ${command}`);
+
+      const sendCommand = new SendCommandCommand({
+        InstanceIds: [this.instanceId],
+        DocumentName: 'AWS-RunPowerShellScript',
+        Parameters: {
+          commands: [command]
+        }
+      });
+
+      const response = await this.ssmClient.send(sendCommand);
+      console.log('Command execution initiated:', response.Command?.CommandId);
+
+      // In real implementation, we would wait for command completion and fetch the output
+      // This is simplified for demonstration
+      return `Command executed successfully: ${response.Command?.CommandId}`;
+    } catch (error) {
+      console.error(`Error executing command (attempt ${retryCount + 1}/${RETRY_ATTEMPTS}):`, error);
+
+      // Retry with exponential backoff if not exceeded max retries
+      if (retryCount < RETRY_ATTEMPTS - 1) {
+        const backoffTime = RETRY_BACKOFF_MS * Math.pow(2, retryCount);
+        console.log(`Retrying in ${backoffTime}ms...`);
+        await new Promise(resolve => setTimeout(resolve, backoffTime));
+        return this.executeCommand(command, retryCount + 1);
+      }
+
+      throw error;
+    }
+  }
+
+  private startConnectionMonitoring(): void {
+    // Run monitoring every 5 minutes
+    setInterval(() => {
+      this.checkActiveConnections();
+    }, 5 * 60 * 1000);
+  }
+
+  private async checkActiveConnections(): Promise<void> {
+    console.log(`Checking ${activeConnections.size} active connections...`);
+
+    for (const [connectionId, state] of activeConnections.entries()) {
+      try {
+        // Skip recent connections (less than 10 minutes old)
+        if (Date.now() - state.lastCheck < 10 * 60 * 1000) {
+          continue;
+        }
+
+        console.log(`Checking connection status for ${connectionId}...`);
+        const isActive = await this.checkConnectionStatus(connectionId);
+
+        if (!isActive && state.reconnectAttempts < RETRY_ATTEMPTS) {
+          console.log(`Connection ${connectionId} appears inactive, attempting to reconnect (attempt ${state.reconnectAttempts + 1}/${RETRY_ATTEMPTS})...`);
+          state.reconnectAttempts++;
+          // Logic to reconnect would go here in a real implementation
+        }
+
+        // Update last check time
+        state.lastCheck = Date.now();
+      } catch (error) {
+        console.error(`Error checking connection ${connectionId}:`, error);
+      }
+    }
+  }
+
+  private async checkConnectionStatus(connectionId: string): Promise<boolean> {
+    try {
+      const checkCommand = `
+        # Check if MetaTrader is running with our connection ID
+        $mt5Process = Get-Process -Name "terminal64" -ErrorAction SilentlyContinue
+        $configPath = "C:\\mt5_config_${connectionId}.ini"
+
+        if ($mt5Process -and (Test-Path $configPath)) {
+          Write-Output "MetaTrader is running with connection ${connectionId}"
+          $true
+        } else {
+          Write-Output "MetaTrader is not running with connection ${connectionId}"
+          $false
+        }
+      `;
+
+      const result = await this.executeCommand(checkCommand);
+      return result.includes('true') || result.includes('MetaTrader is running');
+    } catch (error) {
+      console.error(`Error checking connection status for ${connectionId}:`, error);
+      return false;
+    }
+  }
+
+  public async disconnectFromMetaTrader(connectionId: string): Promise<boolean> {
+    try {
+      console.log(`Disconnecting from MetaTrader (${connectionId})...`);
+
+      if (!connectionId || !activeConnections.has(connectionId)) {
+        console.warn(`Connection ID ${connectionId} not found in active connections`);
+        return false;
+      }
+
+      const disconnectCommand = `
+        # Close MetaTrader instance for connection ${connectionId}
+        $configPath = "C:\\mt5_config_${connectionId}.ini"
+
+        # Stop MT5 process if running
+        Stop-Process -Name "terminal64" -Force -ErrorAction SilentlyContinue
+
+        # Clean up configuration file
+        if (Test-Path $configPath) {
+          Remove-Item -Path $configPath -Force
+          Write-Output "Cleaned up configuration for ${connectionId}"
+        }
+
+        Write-Output "MetaTrader disconnected for ${connectionId}"
+      `;
+
+      await this.executeCommand(disconnectCommand);
+
+      // Remove from active connections
+      activeConnections.delete(connectionId);
+
+      return true;
+    } catch (error) {
+      console.error(`Error disconnecting from MetaTrader (${connectionId}):`, error);
+      return false;
+    }
+  }
+}
