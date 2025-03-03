@@ -356,27 +356,29 @@ export default function DerivAccountLinking() {
       
       // Define the fallback endpoints in case the primary one fails
       const fallbackEndpoints = [
-        `wss://${selectedServer.endpoint}/websockets/v3?app_id=${appId}`,
-        `wss://ws.binaryws.com/websockets/v3?app_id=${appId}`,
-        `wss://frontend.binaryws.com/websockets/v3?app_id=${appId}`,
-        `wss://deriv.com/websockets/v3?app_id=${appId}`,
-        `wss://api.deriv.com/websockets/v3?app_id=${appId}`
-      ];
-      
-      // Initially use the selected server endpoint
+        `wss://${selectedServer.endpoint}/websockets/v3`,
+        'wss://ws.binaryws.com/websockets/v3',
+        'wss://frontend.binaryws.com/websockets/v3',
+        'wss://deriv.com/websockets/v3',
+        'wss://api.deriv.com/websockets/v3'
+      ].map(endpoint => `${endpoint}?app_id=${appId}`);
+
       let retryCount = 0;
       const maxRetries = 3;
-      
-      const connectWithRetry = () => {
+      const baseDelay = 1000; // Base delay of 1 second
+
+      const connectWithRetry = async () => {
         if (retryCount > 0) {
-          console.log(`Retrying WebSocket connection (attempt ${retryCount} of ${maxRetries})...`);
+          const delay = Math.min(baseDelay * Math.pow(2, retryCount - 1), 10000); // Exponential backoff with max 10s
+          console.log(`Retrying WebSocket connection (attempt ${retryCount} of ${maxRetries}) after ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
-        
+
         // Use the appropriate endpoint based on retry count
         const endpoint = fallbackEndpoints[Math.min(retryCount, fallbackEndpoints.length - 1)];
         console.log(`Connecting to Deriv server using endpoint: ${endpoint}`);
-        
-        let ws: WebSocket;
+
+        let ws: WebSocket | null = null;
         try {
           ws = new WebSocket(endpoint);
         } catch (error: any) {
@@ -384,56 +386,92 @@ export default function DerivAccountLinking() {
           handleRetry(`Failed to create WebSocket: ${error.message}`);
           return null;
         }
-        
+
         // Add connection state tracking
         let connectionEstablished = false;
-        
-        // Add ping interval to keep connection alive
         let pingInterval: NodeJS.Timeout;
-        
+        let reconnectTimeout: NodeJS.Timeout;
+
         // Set a timeout for the connection
         const connectionTimeout = setTimeout(() => {
-          if (!connectionEstablished) {
+          if (!connectionEstablished && ws) {
             console.error('Connection timeout - WebSocket failed to open within 10 seconds');
-            if (ws && ws.readyState !== WebSocket.CLOSED) {
-              ws.close();
-            }
+            ws.close();
             handleRetry('Connection timeout - please try again');
           }
-        }, 10000); // Increased timeout to 10 seconds
-        
+        }, 10000);
+
         ws.onopen = () => {
           clearTimeout(connectionTimeout);
           connectionEstablished = true;
           const connectionTime = Date.now() - connectionStartTime;
-          console.log(`2. WebSocket connection opened successfully (took ${connectionTime}ms)`);
-          console.log('3. Sending authorization request to Deriv...');
-          
+          console.log(`WebSocket connection opened successfully (took ${connectionTime}ms)`);
+
+          // Validate app_id before proceeding
+          if (!appId || isNaN(Number(appId))) {
+            console.error('Invalid app_id:', appId);
+            ws?.close();
+            handleConnectionError('Invalid app_id configuration', token);
+            return;
+          }
+
           // Set up ping interval to keep connection alive
           pingInterval = setInterval(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ ping: 1 }));
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              try {
+                ws.send(JSON.stringify({ ping: 1 }));
+              } catch (error) {
+                console.error('Error sending ping:', error);
+                clearInterval(pingInterval);
+                ws.close();
+              }
             }
-          }, 30000); // Send ping every 30 seconds
-          
+          }, 30000);
+
+          // Set up automatic reconnection if no message received
+          const resetReconnectTimeout = () => {
+            if (reconnectTimeout) clearTimeout(reconnectTimeout);
+            reconnectTimeout = setTimeout(() => {
+              console.log('No message received for 60 seconds, reconnecting...');
+              if (ws) ws.close();
+            }, 60000);
+          };
+          resetReconnectTimeout();
+
           const authMessage = {
             authorize: token,
             passthrough: { userId: user?.uid }
           };
-          ws.send(JSON.stringify(authMessage));
+
+          try {
+            ws.send(JSON.stringify(authMessage));
+            console.log('Authorization request sent to Deriv');
+          } catch (error) {
+            console.error('Error sending auth message:', error);
+            ws.close();
+            handleConnectionError('Failed to send authorization request', token);
+          }
         };
-  
+
         ws.onmessage = (event) => {
           try {
             const response = JSON.parse(event.data);
-            console.log('4. Received message from Deriv:', response.msg_type);
-            
+            console.log('Received message from Deriv:', response.msg_type);
+
+            // Reset reconnect timeout on any message
+            if (reconnectTimeout) {
+              clearTimeout(reconnectTimeout);
+              reconnectTimeout = setTimeout(() => {
+                console.log('No message received for 60 seconds, reconnecting...');
+                if (ws) ws.close();
+              }, 60000);
+            }
+
             // Handle ping response
             if (response.msg_type === 'ping') {
-              console.log('Received ping response from server');
               return;
             }
-            
+
             if (response.msg_type === 'authorize') {
               if (response.error) {
                 console.error('Deriv authorization error:', response.error);
@@ -441,26 +479,25 @@ export default function DerivAccountLinking() {
                 ws.close();
                 handleRetry(response.error.message);
               } else {
-                console.log('5. Successfully authorized with Deriv');
-                console.log('6. Starting VPS connection process...');
-                
+                console.log('Successfully authorized with Deriv');
+
                 // Start VPS connection in parallel with Deriv setup
                 (async () => {
                   try {
                     // Get EA configuration from derivConfigs
                     const derivConfigRef = doc(db, "derivConfigs", user?.uid || '');
                     const derivConfigSnap = await getDoc(derivConfigRef);
-                    
+
                     if (!derivConfigSnap.exists()) {
                       throw new Error('EA configuration not found. Please configure your EA settings first.');
                     }
-  
+
                     const derivConfig = derivConfigSnap.data();
-                    
+
                     if (!derivConfig.eaConfig) {
                       throw new Error('EA configuration not found. Please configure your EA settings first.');
                     }
-  
+
                     const vpsResponse = await fetch('/api/vps/connect', {
                       method: 'POST',
                       headers: {
@@ -474,36 +511,36 @@ export default function DerivAccountLinking() {
                         eaConfig: derivConfig.eaConfig
                       })
                     });
-  
+
                     if (!vpsResponse.ok) {
                       const errorData = await vpsResponse.json();
                       throw new Error(errorData.error || `VPS connection failed with status: ${vpsResponse.status}`);
                     }
-                    
+
                     const vpsResult = await vpsResponse.json();
                     if (!vpsResult.success) {
                       console.error('VPS connection failed:', vpsResult.error);
                       throw new Error(vpsResult.error);
                     }
-                    console.log('7. VPS connection established successfully');
-                    
+                    console.log('VPS connection established successfully');
+
                     // Update connection status
                     setConnectionStatus('connected');
                     setIsConnected(true);
                     setIsConnecting(false);
                     setShowSuccessScreen(true);
                     toast.success('Successfully connected to Deriv and VPS');
-                    
+
                     // Store the WebSocket instance
                     setWsConnection(ws);
-                    
+
                     // Request trading data in parallel
-                    console.log('8. Requesting trading data...');
+                    console.log('Requesting trading data...');
                     ws.send(JSON.stringify({
                       active_symbols: "brief",
                       product_type: "mt5"
                     }));
-  
+
                     ws.send(JSON.stringify({
                       account_status: 1,
                       subscribe: 1
@@ -520,14 +557,14 @@ export default function DerivAccountLinking() {
                 })();
               }
             }
-            
+
             if (response.msg_type === 'active_symbols') {
-              console.log('9. Received trading symbols:', response.active_symbols?.length);
+              console.log('Received trading symbols:', response.active_symbols?.length);
               handleSymbolsResponse(response.active_symbols as DerivSymbol[]);
             }
-  
+
             if (response.msg_type === 'account_status') {
-              console.log('10. Received account status:', response.status);
+              console.log('Received account status:', response.status);
               updateAccountStatus(response.status as DerivAccountStatus);
             }
           } catch (error: any) {
@@ -535,53 +572,59 @@ export default function DerivAccountLinking() {
             handleConnectionError('Error processing server response: ' + error.message, token);
           }
         };
-  
+
         ws.onerror = (error) => {
           console.error('WebSocket error:', error);
           clearTimeout(connectionTimeout);
           if (pingInterval) clearInterval(pingInterval);
-          
+          if (reconnectTimeout) clearTimeout(reconnectTimeout);
+
           if (!connectionEstablished) {
-            // Log additional diagnostic info
-            console.log(`WebSocket error details - URL: ${endpoint}, readyState: ${ws.readyState}`);
+            console.log(`WebSocket error details - URL: ${endpoint}, readyState: ${ws?.readyState}`);
             handleRetry('WebSocket connection error. Please check your internet connection and firewall settings.');
           }
         };
-  
+
         ws.onclose = (event) => {
-          console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}, URL: ${endpoint}`);
+          console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`);
           clearTimeout(connectionTimeout);
           if (pingInterval) clearInterval(pingInterval);
-          
-          // Only retry if we haven't already connected successfully
+          if (reconnectTimeout) clearTimeout(reconnectTimeout);
+
           if (!connectionEstablished) {
-            // Certain close codes indicate a problem that won't be fixed by retrying
-            const permanentErrorCodes = [1008, 1011, 1015]; // Policy violation, internal error, TLS error
-            
-            if (permanentErrorCodes.includes(event.code)) {
-              handleConnectionError(`Connection closed (${event.code}): ${event.reason || 'Unknown reason'}`, token);
+            retryCount++;
+            if (retryCount <= maxRetries) {
+              console.log(`Connection attempt ${retryCount} failed, trying next endpoint...`);
+              connectWithRetry();
             } else {
-              handleRetry(`Connection closed (${event.code})`);
+              handleConnectionError('All WebSocket connection attempts failed. Please try again later.', token);
             }
+          } else if (event.code === 1006) {
+            // Abnormal closure - attempt to reconnect
+            console.log('Abnormal connection closure, attempting to reconnect...');
+            retryCount = 0;
+            connectWithRetry();
           }
         };
-        
+
         return ws;
       };
-      
+
       const handleRetry = (errorMessage: string) => {
         retryCount++;
         console.error(`Connection attempt failed: ${errorMessage}`);
-        
+
         if (retryCount <= maxRetries) {
           // Exponential backoff: increase delay with each retry
-          const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 10000); // Cap at 10 seconds
+          const delay = Math.min(baseDelay * Math.pow(2, retryCount - 1), 10000); // Cap at 10 seconds
           console.log(`Will retry in ${delay}ms... (attempt ${retryCount} of ${maxRetries})`);
-          
+
+          // Use toast.dismiss to clear any existing retry notifications before showing a new one
+          toast.dismiss('connection-retry');
           toast.info(`Connection failed. Retrying in ${Math.round(delay / 1000)} seconds...`, {
-            toastId: 'connection-retry' // Prevent multiple toasts
+            id: 'connection-retry' // In Sonner, it's 'id' not 'toastId'
           });
-          
+
           setTimeout(() => {
             connectWithRetry();
           }, delay);
@@ -592,7 +635,7 @@ export default function DerivAccountLinking() {
           handleConnectionError(`Connection failed after ${maxRetries} attempts: ${errorMessage}`, token);
         }
       };
-      
+
       // Start the connection process
       const ws = connectWithRetry();
       return ws;
