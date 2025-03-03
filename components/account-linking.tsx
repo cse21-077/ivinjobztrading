@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { toast } from "sonner"  // Importing Sonner's toast
 import { getDerivOAuthUrl } from "@/lib/deriv-oauth";
 
-// Deriv server options
+// Deriv server options for SVG Limited
 const DERIV_SERVERS = [
   { id: "svg-demo", name: "SVG-Demo", description: "SVG Virtual Trading", endpoint: "green.binaryws.com" },
   { id: "svg-real", name: "SVG-Real", description: "SVG Real Money Trading", endpoint: "ws.binaryws.com" },
@@ -106,29 +106,24 @@ export default function DerivAccountLinking() {
   const [markets, setMarkets] = useState<string[]>([])
   const [leverage, setLeverage] = useState("")
   const [isConnected, setIsConnected] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
-  const [selectedSymbols, setSelectedSymbols] = useState<string[]>([])
-  const [mt4Server, setMt4Server] = useState("")
-  const [mt4Login, setMt4Login] = useState("")
-  const [mt4Password, setMt4Password] = useState("")
-  const [mt5Server, setMt5Server] = useState("")
-  const [mt5Login, setMt5Login] = useState("")
-  const [mt5Password, setMt5Password] = useState("")
+  const [isConnecting, setIsConnecting] = useState(false)
   const [wsConnection, setWsConnection] = useState<WebSocket | null>(null)
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
   const [availableSymbols, setAvailableSymbols] = useState<string[]>([])
   const [activeSymbols, setActiveSymbols] = useState<string[]>([])
   const [retryCount, setRetryCount] = useState(0)
   const MAX_RETRIES = 3
-  const [isConnecting, setIsConnecting] = useState(false)
-  const [availableAccounts, setAvailableAccounts] = useState<DerivAccount[]>([])
-  const [selectedAccount, setSelectedAccount] = useState<DerivAccount | null>(null)
-  const [showAccountSelect, setShowAccountSelect] = useState(false)
   const [isAccountConfirmed, setIsAccountConfirmed] = useState(false)
   const [showSuccessScreen, setShowSuccessScreen] = useState(false)
   const [tradingMode, setTradingMode] = useState<'automated' | null>(null)
   const [showEaConfigDialog, setShowEaConfigDialog] = useState(false)
   const [errorType, setErrorType] = useState<ConnectionErrorType | null>(null);
+  
+  // Add missing state variables
+  const [selectedAccount, setSelectedAccount] = useState<DerivAccount | null>(null);
+  const [availableAccounts, setAvailableAccounts] = useState<DerivAccount[]>([]);
+  const [showAccountSelect, setShowAccountSelect] = useState(false);
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>([]);
 
   const getErrorMessage = (type: ConnectionErrorType): string => {
     switch(type) {
@@ -188,10 +183,134 @@ export default function DerivAccountLinking() {
     }
   };
 
+  const establishWebSocketConnection = useCallback(async (token: string) => {
+    if (!token) {
+      throw new Error('API token is required');
+    }
+
+    // Default to SVG-Real if no server is selected
+    const selectedServer = DERIV_SERVERS.find(s => s.id === server) || DERIV_SERVERS[1]; // SVG-Real as default
+    
+    // Use a direct WebSocket connection with the app_id
+    const endpoint = `wss://${selectedServer.endpoint}/websockets/v3?app_id=${DERIV_APP_ID}`;
+    console.log('Connecting to SVG server:', endpoint);
+
+    return new Promise<WebSocket>((resolve, reject) => {
+      try {
+        const ws = new WebSocket(endpoint);
+        
+        let connectionTimeout = setTimeout(() => {
+          console.error('Connection timeout');
+          if (ws.readyState !== WebSocket.OPEN) {
+            ws.close();
+            reject(new Error('Connection timeout - please try again'));
+          }
+        }, 10000);
+        
+        ws.onopen = () => {
+          clearTimeout(connectionTimeout);
+          console.log('WebSocket connection established with SVG server');
+          
+          // Send authorization request
+          try {
+            ws.send(JSON.stringify({ 
+              authorize: token,
+              passthrough: { userId: user?.uid }
+            }));
+          } catch (error) {
+            console.error('Error sending authorization request:', error);
+            reject(new Error('Failed to send authorization request'));
+          }
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const response = JSON.parse(event.data);
+            console.log('Received:', response.msg_type);
+            
+            if (response.error) {
+              console.error('WebSocket error:', response.error);
+              reject(new Error(response.error.message || 'Unknown error from server'));
+              return;
+            }
+
+            if (response.msg_type === 'authorize') {
+              console.log('Authorization successful');
+              resolve(ws);
+            }
+          } catch (error) {
+            console.error('Error processing message:', error);
+            reject(new Error('Error processing server response'));
+          }
+        };
+
+        ws.onerror = (error) => {
+          clearTimeout(connectionTimeout);
+          console.error('WebSocket error:', error);
+          reject(error);
+        };
+
+        ws.onclose = (event) => {
+          clearTimeout(connectionTimeout);
+          console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`);
+          if (event.wasClean) {
+            console.log('Connection closed cleanly');
+          } else {
+            reject(new Error(`Connection closed unexpectedly (${event.code})`));
+          }
+        };
+
+      } catch (error) {
+        console.error('Error establishing WebSocket connection:', error);
+        reject(error);
+      }
+    });
+  }, [server, user]);
+
+  const handleConnect = async () => {
+    if (!apiToken) {
+      toast.error('API token is required');
+      return;
+    }
+
+    if (!server) {
+      // Default to SVG-Real if no server selected
+      setServer('svg-real');
+    }
+
+    setIsConnecting(true);
+    try {
+      const ws = await establishWebSocketConnection(apiToken);
+      setWsConnection(ws);
+      setIsConnected(true);
+      
+      // Update Firestore with connection status
+      if (user) {
+        await setDoc(doc(db, "derivConfigs", user.uid), {
+          apiToken,
+          server: server || 'svg-real',
+          accountId,
+          markets,
+          leverage,
+          isConnected: true,
+          lastConnected: new Date()
+        }, { merge: true });
+      }
+      
+      toast.success('Successfully connected to SVG Trading server');
+    } catch (error) {
+      console.error('Connection error:', error);
+      toast.error('Failed to connect: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      setIsConnected(false);
+      setWsConnection(null);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   const handleDisconnect = useCallback(async () => {
     try {
       console.log('=== Starting Disconnection Process ===');
-      setIsLoading(true);
       setIsConnecting(false);
       
       if (wsConnection) {
@@ -236,8 +355,6 @@ export default function DerivAccountLinking() {
     } catch (error) {
       console.error("Error disconnecting:", error);
       toast.error("Failed to disconnect your account");
-    } finally {
-      setIsLoading(false);
     }
   }, [user, wsConnection]);
 
@@ -333,66 +450,307 @@ export default function DerivAccountLinking() {
     }
   }, [user, activeSymbols]);
 
-  const establishWebSocketConnection = useCallback(async (token: string) => {
-    // Define a single endpoint with the known app_id
-    const endpoint = `wss://ws.binaryws.com/websockets/v3?app_id=${DERIV_APP_ID}`;
-    console.log('Attempting connection to:', endpoint);
-
-    return new Promise((resolve, reject) => {
-      try {
-        const ws = new WebSocket(endpoint);
-        
-        ws.onopen = () => {
-          console.log('WebSocket connection established');
-          ws.send(JSON.stringify({ authorize: token }));
-        };
-
-        ws.onmessage = (event) => {
-          const response = JSON.parse(event.data);
-          if (response.error) {
-            console.error('WebSocket error:', response.error);
-            reject(response.error);
-            return;
-          }
-          if (response.msg_type === 'authorize') {
-            console.log('Authorization successful');
-            resolve(ws);
-          }
-        };
-
-        ws.onerror = (error) => {
-          console.error('WebSocket error:', error);
-          reject(error);
-        };
-
-        ws.onclose = () => {
-          console.log('WebSocket connection closed');
-          reject(new Error('WebSocket connection closed'));
-        };
-
-      } catch (error) {
-        console.error('Error establishing WebSocket connection:', error);
-        reject(error);
-      }
-    });
+  const handleAccountSelect = useCallback(async (account: DerivAccount) => {
+    setSelectedAccount(account);
+    setIsAccountConfirmed(false);
   }, []);
 
-  const handleConnection = useCallback(async () => {
+  const handleAccountConfirm = useCallback(async () => {
+    if (!selectedAccount || !user) return;
+
+    try {
+      console.log('=== Starting Account Connection ===');
+      console.log('Account ID:', selectedAccount.accountId);
+      setIsAccountConfirmed(true);
+      setShowAccountSelect(false);
+      setIsConnecting(true);
+      
+      // Save selected account preference
+      await setDoc(doc(db, "derivConfigs", user.uid), {
+        selectedAccountId: selectedAccount.accountId,
+        status: 'connecting',
+        lastConnectionAttempt: new Date()
+      }, { merge: true });
+      
+      // Establish connection with selected account
+      handleConnect();
+      setApiToken(selectedAccount.token);
+      setAccountId(selectedAccount.accountId);
+    } catch (error) {
+      console.error("Error confirming account:", error);
+      toast.error("Failed to confirm account");
+      setIsConnecting(false);
+      setIsAccountConfirmed(false);
+    }
+  }, [user, selectedAccount, handleConnect]);
+
+  const handleChangeAccount = useCallback(() => {
+    setShowAccountSelect(true);
+    setIsAccountConfirmed(false);
+    if (wsConnection) {
+      wsConnection.close();
+    }
+    setConnectionStatus('disconnected');
+    setIsConnected(false);
+  }, [wsConnection]);
+
+  const isMarketSupportedForAccount = useCallback((market: string, accountType: string): boolean => {
+    // Synthetic accounts can only trade synthetic indices
+    if (accountType.includes('demo') && market !== 'synthetic_indices') {
+      return false;
+    }
+    
+    // SVG accounts typically support forex, commodities and synthetic indices
+    if (accountType.includes('svg')) {
+      return ['forex', 'synthetic_indices', 'commodities'].includes(market);
+    }
+    
+    // Default to allowing the market if we're not sure
+    return true;
+  }, []);
+
+  const handleMarketToggle = useCallback((market: string) => {
+    // If we have account information, validate the market is supported
+    if (selectedAccount) {
+      const accountType = selectedAccount.accountId.toLowerCase();
+      if (!isMarketSupportedForAccount(market, accountType)) {
+        toast.error(`${market.replace('_', ' ')} is not supported for this account type`);
+        return;
+      }
+    }
+    
+    setMarkets(prev => 
+      prev.includes(market) 
+        ? prev.filter(m => m !== market) 
+        : [...prev, market]
+    );
+  }, [selectedAccount, isMarketSupportedForAccount]);
+
+  const validateForm = () => {
+    if (!apiToken) return "API token is required"
+    if (!server) return "Please select a server"
+    if (!accountId) return "Account ID is required"
+    if (markets.length === 0) return "Please select at least one market"
+    if (!leverage) return "Please select leverage"
+    return null
+  }
+
+  const testConnection = async () => {
+    return new Promise<boolean>(resolve => {
+      setTimeout(() => resolve(true), 1500)
+    })
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    const validationError = validateForm()
+    if (validationError) {
+      toast.error(validationError) // Using Sonner toast
+      return
+    }
+
+    setIsConnecting(true)
+    try {
+      const connectionSuccessful = await testConnection()
+      
+      if (!connectionSuccessful) {
+        toast.error("Could not connect to Deriv with the provided details") // Using Sonner toast
+        setIsConnecting(false)
+        return
+      }
+      
+      if (user) {
+        const configData: DerivConfig = {
+          apiToken,
+          server,
+          accountId,
+          markets,
+          leverage,
+          isConnected: true,
+          lastConnected: new Date(),
+          selectedSymbols: selectedSymbols,
+          status: 'connected',
+          activeSymbols: activeSymbols,
+          tradingMode: null
+        }
+        
+        await setDoc(doc(db, "derivConfigs", user.uid), configData)
+        
+        await fetch('https://your-aws-ea-server.com/api/connect', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userId: user.uid,
+            apiToken,
+            server,
+            accountId,
+            markets,
+            leverage
+          })
+        })
+        
+        setIsConnected(true)
+        toast.success("Your Deriv account has been connected successfully!") // Using Sonner toast
+      }
+    } catch (error) {
+      console.error("Error connecting account:", error)
+      toast.error("There was an error connecting your account") // Using Sonner toast
+    } finally {
+      setIsConnecting(false)
+    }
+  }
+
+  const handleBrokerLogin = async (credentials: { server: string; login: string; password: string }) => {
     try {
       setIsConnecting(true);
-      const ws = await establishWebSocketConnection(apiToken);
-      setWsConnection(ws as WebSocket);
-      setIsConnected(true);
-      setConnectionStatus('connected');
-      toast.success('Successfully connected to Deriv');
-    } catch (error: unknown) {
+
+      const response = await fetch('/api/mt5/connect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(credentials)
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast.success("Successfully connected to MT5 and activated The Arm EA!");
+        // Save the connection status to Firestore
+        if (user) {
+          await setDoc(doc(db, "mt5Connections", user.uid), {
+            server: credentials.server,
+            login: credentials.login,
+            eaName: 'The Arm',
+            isConnected: true,
+            lastConnected: new Date()
+          });
+        }
+      } else {
+        toast.error(result.error || "Failed to connect to MT5");
+      }
+    } catch (error) {
       console.error('Connection error:', error);
+      toast.error("Failed to connect to MT5. Please check your credentials and try again.");
+    } finally {
       setIsConnecting(false);
-      setConnectionStatus('disconnected');
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      toast.error(`Failed to connect: ${errorMessage}`);
     }
-  }, [apiToken, establishWebSocketConnection]);
+  };
+
+  const handleDerivConnect = async () => {
+    try {
+      setIsConnecting(true);
+      setConnectionStatus('connecting');
+      
+      // Create a direct WebSocket connection
+      const ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
+      
+      ws.onopen = () => {
+        console.log('WebSocket connection established');
+        ws.send(JSON.stringify({ authorize: apiToken }));
+      };
+      
+      ws.onmessage = (event) => {
+        const response = JSON.parse(event.data);
+        console.log('Received message:', response.msg_type);
+        
+        if (response.msg_type === 'authorize') {
+          if (response.error) {
+            console.error('Authorization error:', response.error);
+            toast.error('Authorization failed: ' + response.error.message);
+            ws.close();
+          } else {
+            console.log('Successfully authorized with Deriv');
+            setConnectionStatus('connected');
+            setIsConnected(true);
+            toast.success('Successfully connected to SVG Trading server');
+            setWsConnection(ws);
+          }
+        }
+      };
+      
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        toast.error('WebSocket connection error');
+      };
+      
+      ws.onclose = () => {
+        console.log('WebSocket connection closed');
+        if (!isConnected) {
+          setConnectionStatus('disconnected');
+          toast.error('Connection closed unexpectedly');
+        }
+      };
+    } catch (error) {
+      console.error('Connection error:', error);
+      setConnectionStatus('disconnected');
+      toast.error('Failed to establish connection');
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const handleTradingModeSelect = useCallback(async (mode: 'automated') => {
+    if (!user || !selectedAccount) return;
+
+    try {
+      setTradingMode(mode);
+      setIsConnecting(true);
+
+      // Save trading mode preference
+      await setDoc(doc(db, "derivConfigs", user.uid), {
+        tradingMode: mode,
+        lastUpdated: new Date()
+      }, { merge: true });
+      
+    } catch (error) {
+      console.error("Error setting up trading mode:", error);
+      toast.error("Failed to set up trading mode");
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [user, selectedAccount]);
+
+  // Add EA Configuration Dialog component
+  const EaConfigDialog = () => (
+    <Dialog open={showEaConfigDialog} onOpenChange={setShowEaConfigDialog}>
+      <DialogContent className="bg-gray-800 text-gray-200">
+        <DialogHeader>
+          <DialogTitle>EA Configuration Required</DialogTitle>
+          <DialogDescription>
+            Before connecting to the trading server, you need to configure your EA settings first.
+            This includes selecting your:
+            <ul className="list-disc list-inside mt-2 space-y-1">
+              <li>Trading Market (Synthetic Indices/Forex)</li>
+              <li>Trading Pair (e.g., Volatility 75)</li>
+              <li>Trading Server</li>
+            </ul>
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex flex-col sm:flex-row gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setShowEaConfigDialog(false)}
+            className="sm:order-1"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={() => {
+              window.location.href = '/dashboard/ea-configuration';
+            }}
+            className="bg-blue-600 hover:bg-blue-700"
+            disabled={isConnecting}
+          >
+            Configure EA Settings
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -466,272 +824,14 @@ export default function DerivAccountLinking() {
     };
   }, [user]);
 
-  const handleAccountSelect = useCallback(async (account: DerivAccount) => {
-    setSelectedAccount(account);
-    setIsAccountConfirmed(false);
-  }, []);
-
-  const handleAccountConfirm = useCallback(async () => {
-    if (!selectedAccount || !user) return;
-
-    try {
-      console.log('=== Starting Account Connection ===');
-      console.log('Account ID:', selectedAccount.accountId);
-      setIsAccountConfirmed(true);
-      setShowAccountSelect(false);
-      setIsConnecting(true);
-      
-      // Save selected account preference
-      await setDoc(doc(db, "derivConfigs", user.uid), {
-        selectedAccountId: selectedAccount.accountId,
-        status: 'connecting',
-        lastConnectionAttempt: new Date()
-      }, { merge: true });
-      
-      // Establish connection with selected account
-      handleConnection();
-      setApiToken(selectedAccount.token);
-      setAccountId(selectedAccount.accountId);
-    } catch (error) {
-      console.error("Error confirming account:", error);
-      toast.error("Failed to confirm account");
-      setIsConnecting(false);
-      setIsAccountConfirmed(false);
-    }
-  }, [user, selectedAccount, handleConnection]);
-
-  const handleChangeAccount = useCallback(() => {
-    setShowAccountSelect(true);
-    setIsAccountConfirmed(false);
-    if (wsConnection) {
-      wsConnection.close();
-    }
-    setConnectionStatus('disconnected');
-    setIsConnected(false);
+  // Clean up WebSocket connection on unmount
+  useEffect(() => {
+    return () => {
+      if (wsConnection) {
+        wsConnection.close();
+      }
+    };
   }, [wsConnection]);
-
-  const isMarketSupportedForAccount = useCallback((market: string, accountType: string): boolean => {
-    // Synthetic accounts can only trade synthetic indices
-    if (accountType.includes('demo') && market !== 'synthetic_indices') {
-      return false;
-    }
-    
-    // SVG accounts typically support forex, commodities and synthetic indices
-    if (accountType.includes('svg')) {
-      return ['forex', 'synthetic_indices', 'commodities'].includes(market);
-    }
-    
-    // Default to allowing the market if we're not sure
-    return true;
-  }, []);
-
-  const handleMarketToggle = useCallback((market: string) => {
-    // If we have account information, validate the market is supported
-    if (selectedAccount) {
-      const accountType = selectedAccount.accountId.toLowerCase();
-      if (!isMarketSupportedForAccount(market, accountType)) {
-        toast.error(`${market.replace('_', ' ')} is not supported for this account type`);
-        return;
-      }
-    }
-    
-    setMarkets(prev => 
-      prev.includes(market) 
-        ? prev.filter(m => m !== market) 
-        : [...prev, market]
-    );
-  }, [selectedAccount, isMarketSupportedForAccount]);
-
-  const validateForm = () => {
-    if (!apiToken) return "API token is required"
-    if (!server) return "Please select a server"
-    if (!accountId) return "Account ID is required"
-    if (markets.length === 0) return "Please select at least one market"
-    if (!leverage) return "Please select leverage"
-    return null
-  }
-
-  const testConnection = async () => {
-    return new Promise<boolean>(resolve => {
-      setTimeout(() => resolve(true), 1500)
-    })
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
-    const validationError = validateForm()
-    if (validationError) {
-      toast.error(validationError) // Using Sonner toast
-      return
-    }
-
-    setIsLoading(true)
-    try {
-      const connectionSuccessful = await testConnection()
-      
-      if (!connectionSuccessful) {
-        toast.error("Could not connect to Deriv with the provided details") // Using Sonner toast
-        setIsLoading(false)
-        return
-      }
-      
-      if (user) {
-        const configData: DerivConfig = {
-          apiToken,
-          server,
-          accountId,
-          markets,
-          leverage,
-          isConnected: true,
-          lastConnected: new Date(),
-          selectedSymbols: selectedSymbols,
-          status: 'connected',
-          activeSymbols: activeSymbols,
-          tradingMode: null
-        }
-        
-        await setDoc(doc(db, "derivConfigs", user.uid), configData)
-        
-        await fetch('https://your-aws-ea-server.com/api/connect', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            userId: user.uid,
-            apiToken,
-            server,
-            accountId,
-            markets,
-            leverage
-          })
-        })
-        
-        setIsConnected(true)
-        toast.success("Your Deriv account has been connected successfully!") // Using Sonner toast
-      }
-    } catch (error) {
-      console.error("Error connecting account:", error)
-      toast.error("There was an error connecting your account") // Using Sonner toast
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleBrokerLogin = async (credentials: { server: string; login: string; password: string }) => {
-    try {
-      setIsLoading(true);
-
-      const response = await fetch('/api/mt5/connect', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(credentials)
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        toast.success("Successfully connected to MT5 and activated The Arm EA!");
-        // Save the connection status to Firestore
-        if (user) {
-          await setDoc(doc(db, "mt5Connections", user.uid), {
-            server: credentials.server,
-            login: credentials.login,
-            eaName: 'The Arm',
-            isConnected: true,
-            lastConnected: new Date()
-          });
-        }
-      } else {
-        toast.error(result.error || "Failed to connect to MT5");
-      }
-    } catch (error) {
-      console.error('Connection error:', error);
-      toast.error("Failed to connect to MT5. Please check your credentials and try again.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleDerivConnect = () => {
-    console.log('Initiating Deriv connection...');
-    const oauthUrl = getDerivOAuthUrl();
-    console.log('Redirecting to:', oauthUrl);
-    // Store connection attempt in Firestore
-    if (user) {
-      setDoc(doc(db, "derivConfigs", user.uid), {
-        connectionAttempt: new Date(),
-        status: 'connecting'
-      }, { merge: true }).then(() => {
-        console.log('Connection attempt stored in Firestore');
-      }).catch(error => {
-        console.error('Failed to store connection attempt:', error);
-      });
-    }
-    window.location.href = oauthUrl;
-  };
-
-  const handleTradingModeSelect = useCallback(async (mode: 'automated') => {
-    if (!user || !selectedAccount) return;
-
-    try {
-      setTradingMode(mode);
-      setIsLoading(true);
-
-      // Save trading mode preference
-      await setDoc(doc(db, "derivConfigs", user.uid), {
-        tradingMode: mode,
-        lastUpdated: new Date()
-      }, { merge: true });
-      
-    } catch (error) {
-      console.error("Error setting up trading mode:", error);
-      toast.error("Failed to set up trading mode");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user, selectedAccount]);
-
-  // Add EA Configuration Dialog component
-  const EaConfigDialog = () => (
-    <Dialog open={showEaConfigDialog} onOpenChange={setShowEaConfigDialog}>
-      <DialogContent className="bg-gray-800 text-gray-200">
-        <DialogHeader>
-          <DialogTitle>EA Configuration Required</DialogTitle>
-          <DialogDescription>
-            Before connecting to the trading server, you need to configure your EA settings first.
-            This includes selecting your:
-            <ul className="list-disc list-inside mt-2 space-y-1">
-              <li>Trading Market (Synthetic Indices/Forex)</li>
-              <li>Trading Pair (e.g., Volatility 75)</li>
-              <li>Trading Server</li>
-            </ul>
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter className="flex flex-col sm:flex-row gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setShowEaConfigDialog(false)}
-            className="sm:order-1"
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={() => {
-              window.location.href = '/dashboard/ea-configuration';
-            }}
-            className="bg-blue-600 hover:bg-blue-700"
-            disabled={isLoading}
-          >
-            Configure EA Settings
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
 
   return (
     <Card className="bg-gray-800 text-gray-200">
@@ -768,9 +868,9 @@ export default function DerivAccountLinking() {
                 <Button
                   onClick={() => handleTradingModeSelect('automated')}
                   className="w-full bg-blue-600 hover:bg-blue-700"
-                  disabled={isLoading}
+                  disabled={isConnecting}
                 >
-                  {isLoading ? "Setting up..." : "Start Automated Trading"}
+                  {isConnecting ? "Setting up..." : "Start Automated Trading"}
                 </Button>
               </div>
             ) : (
@@ -786,14 +886,14 @@ export default function DerivAccountLinking() {
                   <Button
                     onClick={() => window.location.href = '/dashboard/ea-configuration'}
                     className="bg-gray-600 hover:bg-gray-700"
-                    disabled={isLoading}
+                    disabled={isConnecting}
                   >
                     Configure EA Settings
                   </Button>
                   <Button
                     onClick={handleDisconnect}
                     className="bg-red-600 hover:bg-red-700"
-                    disabled={isLoading}
+                    disabled={isConnecting}
                   >
                     Stop Trading & Disconnect
                   </Button>
@@ -846,7 +946,7 @@ export default function DerivAccountLinking() {
                       <Button
                         onClick={handleChangeAccount}
                         className="bg-blue-600 hover:bg-blue-700"
-                        disabled={isLoading || connectionStatus === 'connecting'}
+                        disabled={isConnecting || connectionStatus === 'connecting'}
                       >
                         Change Account
                       </Button>
@@ -862,16 +962,16 @@ export default function DerivAccountLinking() {
           <Button 
                     onClick={handleDisconnect}
                     className="w-full bg-red-600 hover:bg-red-700"
-                    disabled={isLoading || connectionStatus === 'connecting'}
+                    disabled={isConnecting || connectionStatus === 'connecting'}
                   >
-                    {isLoading ? "Disconnecting..." : "Disconnect Account"}
+                    {isConnecting ? "Disconnecting..." : "Disconnect Account"}
           </Button>
                 </>
               ) : (
           <Button 
                   onClick={handleDerivConnect}
             className="w-full" 
-                  disabled={isLoading || connectionStatus === 'connecting'}
+                  disabled={isConnecting || connectionStatus === 'connecting'}
           >
                   {connectionStatus === 'connecting' ? "Connecting..." : "Connect Deriv Account"}
           </Button>
