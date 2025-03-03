@@ -320,46 +320,76 @@ export default function DerivAccountLinking() {
               console.log('6. Starting VPS connection process...');
               
               // Start VPS connection in parallel with Deriv setup
-              fetch('/api/vps/connect', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  userId: user?.uid,
-                  accountId: response.authorize.loginid,
-                  token: token
-                })
-              }).then(async (vpsResponse) => {
-                const vpsResult = await vpsResponse.json();
-                if (!vpsResult.success) {
-                  console.error('VPS connection failed:', vpsResult.error);
-                  throw new Error(vpsResult.error);
-                }
-                console.log('7. VPS connection established successfully');
-                
-                // Update connection status
-                setConnectionStatus('connected');
-                setIsConnected(true);
-                setIsConnecting(false);
-                setShowSuccessScreen(true);
-                toast.success('Successfully connected to Deriv and VPS');
-                
-                // Request trading data in parallel
-                console.log('8. Requesting trading data...');
-                ws.send(JSON.stringify({
-                  active_symbols: "brief",
-                  product_type: "mt5"
-                }));
+              (async () => {
+                try {
+                  // Get EA configuration from Firestore
+                  const eaConfigRef = doc(db, "eaConfigs", user?.uid || '');
+                  const eaConfigSnap = await getDoc(eaConfigRef);
+                  
+                  if (!eaConfigSnap.exists()) {
+                    throw new Error('EA configuration not found. Please configure your EA settings first.');
+                  }
 
-                ws.send(JSON.stringify({
-                  account_status: 1,
-                  subscribe: 1
-                }));
-              }).catch((error) => {
-                console.error('VPS connection error:', error);
-                handleConnectionError('Failed to connect to VPS server', token);
-              });
+                  const eaConfig = eaConfigSnap.data();
+
+                  const vpsResponse = await fetch('/api/vps/connect', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                      userId: user?.uid,
+                      accountId: response.authorize.loginid,
+                      token: token,
+                      eaConfig: {
+                        server: eaConfig.server,
+                        login: eaConfig.login,
+                        password: eaConfig.password,
+                        eaName: eaConfig.eaName,
+                        pairs: eaConfig.pairs
+                      }
+                    })
+                  });
+
+                  if (!vpsResponse.ok) {
+                    throw new Error(`VPS connection failed with status: ${vpsResponse.status}`);
+                  }
+                  
+                  const vpsResult = await vpsResponse.json();
+                  if (!vpsResult.success) {
+                    console.error('VPS connection failed:', vpsResult.error);
+                    throw new Error(vpsResult.error);
+                  }
+                  console.log('7. VPS connection established successfully');
+                  
+                  // Update connection status
+                  setConnectionStatus('connected');
+                  setIsConnected(true);
+                  setIsConnecting(false);
+                  setShowSuccessScreen(true);
+                  toast.success('Successfully connected to Deriv and VPS');
+                  
+                  // Request trading data in parallel
+                  console.log('8. Requesting trading data...');
+                  ws.send(JSON.stringify({
+                    active_symbols: "brief",
+                    product_type: "mt5"
+                  }));
+
+                  ws.send(JSON.stringify({
+                    account_status: 1,
+                    subscribe: 1
+                  }));
+                } catch (error: any) {
+                  console.error('VPS connection error:', error);
+                  // Don't retry on 404 errors as they indicate a configuration issue
+                  if (error.message?.includes('404')) {
+                    handleConnectionError('VPS service is not available. Please contact support.', token);
+                  } else {
+                    handleConnectionError('Failed to connect to VPS server', token);
+                  }
+                }
+              })();
             }
           }
           
