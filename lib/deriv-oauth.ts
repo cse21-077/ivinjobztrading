@@ -2,7 +2,7 @@ import { doc, setDoc } from "firebase/firestore";
 import { db } from "./firebase";
 
 const DERIV_APP_ID = "69299";
-const REDIRECT_URL = "https://thearmbyivinjobz.netlify.app/dashboard";
+const REDIRECT_URL = "https://thearmbyivinjobz.netlify.app/dashboard/redirect";
 
 export const getDerivOAuthUrl = () => {
   return `https://oauth.deriv.com/oauth2/authorize?app_id=${DERIV_APP_ID}&l=EN&redirect_uri=${encodeURIComponent(REDIRECT_URL)}`;

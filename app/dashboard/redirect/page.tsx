@@ -27,6 +27,9 @@ function OAuthRedirectContent() {
   useEffect(() => {
     const handleRedirect = async () => {
       console.log('Starting OAuth redirect handling...');
+      console.log('Current URL:', window.location.href);
+      console.log('Search params:', Object.fromEntries(searchParams.entries()));
+      
       if (!user) {
         console.error('No user found, redirecting to login');
         toast.error("Please log in first");
@@ -37,6 +40,14 @@ function OAuthRedirectContent() {
       try {
         const url = window.location.href;
         console.log('Processing redirect URL:', url);
+        
+        // Check for error in OAuth response
+        if (searchParams.get('error')) {
+          console.error('OAuth error:', searchParams.get('error'));
+          console.error('Error description:', searchParams.get('error_description'));
+          throw new Error(searchParams.get('error_description') || 'OAuth error occurred');
+        }
+        
         const accounts = parseOAuthRedirect(url);
         console.log('Parsed accounts:', accounts);
         
