@@ -295,48 +295,51 @@ export default function DerivAccountLinking() {
   useEffect(() => {
     let mounted = true;
     let connectionAttempted = false;
+    let wsInstance: WebSocket | null = null;
 
     const fetchUserConfig = async () => {
-      if (user && mounted && !connectionAttempted) {
-        try {
-          console.log('Fetching user configuration...');
-          // First check for OAuth tokens
-          const accountsRef = doc(db, "derivAccounts", user.uid);
-          const accountsSnap = await getDoc(accountsRef);
-          
-          if (accountsSnap.exists()) {
-            const accounts = accountsSnap.data().accounts;
-            console.log('Found Deriv accounts:', accounts);
-            if (accounts && accounts.length > 0 && !wsConnection && !isConnecting) {
-              // Use the first account's token to establish WebSocket connection
-              const token = accounts[0].token;
-              console.log('Found token, establishing WebSocket connection...');
-              setIsConnecting(true);
-              connectionAttempted = true;
-              establishWebSocketConnection(token);
-              setApiToken(token);
-              setAccountId(accounts[0].accountId);
-            }
-          } else {
-            console.log('No Deriv accounts found in Firestore');
-          }
+      if (!user || !mounted || connectionAttempted || isConnecting) {
+        return;
+      }
 
-          // Then fetch other config
-          const docRef = doc(db, "derivConfigs", user.uid)
-          const docSnap = await getDoc(docRef)
-          if (docSnap.exists()) {
-            const data = docSnap.data() as DerivConfig
-            console.log('Found Deriv configuration:', data);
-            setServer(data.server || "")
-            setMarkets(data.markets || [])
-            setLeverage(data.leverage || "")
-            setActiveSymbols(data.activeSymbols || [])
+      try {
+        console.log('Fetching user configuration...');
+        // First check for OAuth tokens
+        const accountsRef = doc(db, "derivAccounts", user.uid);
+        const accountsSnap = await getDoc(accountsRef);
+        
+        if (accountsSnap.exists()) {
+          const accounts = accountsSnap.data().accounts;
+          console.log('Found Deriv accounts:', accounts);
+          if (accounts && accounts.length > 0 && !wsConnection && connectionStatus === 'disconnected') {
+            // Use the first account's token to establish WebSocket connection
+            const token = accounts[0].token;
+            console.log('Found token, establishing WebSocket connection...');
+            setIsConnecting(true);
+            connectionAttempted = true;
+            wsInstance = establishWebSocketConnection(token);
+            setApiToken(token);
+            setAccountId(accounts[0].accountId);
           }
-        } catch (error) {
-          console.error("Error fetching config:", error)
-          if (mounted) {
-            toast.error("Error retrieving configuration")
-          }
+        } else {
+          console.log('No Deriv accounts found in Firestore');
+        }
+
+        // Then fetch other config
+        const docRef = doc(db, "derivConfigs", user.uid)
+        const docSnap = await getDoc(docRef)
+        if (docSnap.exists()) {
+          const data = docSnap.data() as DerivConfig
+          console.log('Found Deriv configuration:', data);
+          setServer(data.server || "")
+          setMarkets(data.markets || [])
+          setLeverage(data.leverage || "")
+          setActiveSymbols(data.activeSymbols || [])
+        }
+      } catch (error) {
+        console.error("Error fetching config:", error)
+        if (mounted) {
+          toast.error("Error retrieving configuration")
         }
       }
     }
@@ -345,17 +348,11 @@ export default function DerivAccountLinking() {
 
     return () => {
       mounted = false;
-      if (wsConnection) {
-        wsConnection.close();
+      if (wsInstance) {
+        wsInstance.close();
       }
     }
-  }, [user, wsConnection, establishWebSocketConnection, isConnecting]);
-
-  useEffect(() => {
-    if (connectionStatus === 'connecting' && apiToken && !wsConnection) {
-      establishWebSocketConnection(apiToken);
-    }
-  }, [connectionStatus, apiToken, wsConnection, establishWebSocketConnection]);
+  }, [user, wsConnection, establishWebSocketConnection, isConnecting, connectionStatus]);
 
   const handleMarketToggle = (market: string) => {
     setMarkets(prev => 
