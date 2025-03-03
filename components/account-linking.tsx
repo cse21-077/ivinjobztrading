@@ -43,6 +43,7 @@ interface DerivConfig {
   selectedSymbols: string[];
   status: 'disconnected' | 'connecting' | 'connected';
   activeSymbols: string[];
+  selectedAccountId?: string;
 }
 
 interface MT4Config {
@@ -79,6 +80,12 @@ interface DerivAccountStatus {
   login_id: string;
 }
 
+interface DerivAccount {
+  accountId: string;
+  token: string;
+  currency: string;
+}
+
 export default function DerivAccountLinking() {
   const [user] = useAuthState(auth)
   const [apiToken, setApiToken] = useState("")
@@ -102,6 +109,9 @@ export default function DerivAccountLinking() {
   const [retryCount, setRetryCount] = useState(0)
   const MAX_RETRIES = 3
   const [isConnecting, setIsConnecting] = useState(false)
+  const [availableAccounts, setAvailableAccounts] = useState<DerivAccount[]>([])
+  const [selectedAccount, setSelectedAccount] = useState<DerivAccount | null>(null)
+  const [showAccountSelect, setShowAccountSelect] = useState(false)
 
   const handleDisconnect = useCallback(async () => {
     try {
@@ -311,15 +321,23 @@ export default function DerivAccountLinking() {
         if (accountsSnap.exists()) {
           const accounts = accountsSnap.data().accounts;
           console.log('Found Deriv accounts:', accounts);
-          if (accounts && accounts.length > 0 && !wsConnection && connectionStatus === 'disconnected') {
-            // Use the first account's token to establish WebSocket connection
-            const token = accounts[0].token;
-            console.log('Found token, establishing WebSocket connection...');
-            setIsConnecting(true);
-            connectionAttempted = true;
-            wsInstance = establishWebSocketConnection(token);
-            setApiToken(token);
-            setAccountId(accounts[0].accountId);
+          setAvailableAccounts(accounts);
+          
+          if (accounts && accounts.length > 0) {
+            // If there's only one account, use it automatically
+            if (accounts.length === 1) {
+              setSelectedAccount(accounts[0]);
+              if (!wsConnection && connectionStatus === 'disconnected') {
+                setIsConnecting(true);
+                connectionAttempted = true;
+                wsInstance = establishWebSocketConnection(accounts[0].token);
+                setApiToken(accounts[0].token);
+                setAccountId(accounts[0].accountId);
+              }
+            } else {
+              // If multiple accounts, show selection dialog
+              setShowAccountSelect(true);
+            }
           }
         } else {
           console.log('No Deriv accounts found in Firestore');
@@ -335,6 +353,15 @@ export default function DerivAccountLinking() {
           setMarkets(data.markets || [])
           setLeverage(data.leverage || "")
           setActiveSymbols(data.activeSymbols || [])
+          
+          // If there's a previously selected account, use it
+          if (data.selectedAccountId && availableAccounts.length > 0) {
+            const savedAccount = availableAccounts.find(acc => acc.accountId === data.selectedAccountId);
+            if (savedAccount) {
+              setSelectedAccount(savedAccount);
+              setShowAccountSelect(false);
+            }
+          }
         }
       } catch (error) {
         console.error("Error fetching config:", error)
@@ -352,7 +379,31 @@ export default function DerivAccountLinking() {
         wsInstance.close();
       }
     }
-  }, [user, wsConnection, establishWebSocketConnection, isConnecting, connectionStatus]);
+  }, [user, wsConnection, establishWebSocketConnection, isConnecting, connectionStatus, availableAccounts]);
+
+  const handleAccountSelect = async (account: DerivAccount) => {
+    try {
+      setSelectedAccount(account);
+      setShowAccountSelect(false);
+      setIsConnecting(true);
+      
+      // Save selected account preference
+      if (user) {
+        await setDoc(doc(db, "derivConfigs", user.uid), {
+          selectedAccountId: account.accountId
+        }, { merge: true });
+      }
+      
+      // Establish connection with selected account
+      establishWebSocketConnection(account.token);
+      setApiToken(account.token);
+      setAccountId(account.accountId);
+    } catch (error) {
+      console.error("Error selecting account:", error);
+      toast.error("Failed to select account");
+      setIsConnecting(false);
+    }
+  };
 
   const handleMarketToggle = (market: string) => {
     setMarkets(prev => 
@@ -512,13 +563,36 @@ export default function DerivAccountLinking() {
           </AlertDescription>
         </Alert>
         
+        {showAccountSelect && availableAccounts.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-lg font-semibold mb-4">Select Trading Account</h3>
+            <div className="space-y-2">
+              {availableAccounts.map((account) => (
+                <button
+                  key={account.accountId}
+                  onClick={() => handleAccountSelect(account)}
+                  className={`w-full p-4 rounded-lg text-left transition-colors ${
+                    selectedAccount?.accountId === account.accountId
+                      ? 'bg-blue-600 hover:bg-blue-700'
+                      : 'bg-gray-700 hover:bg-gray-600'
+                  }`}
+                >
+                  <div className="font-medium">Account ID: {account.accountId}</div>
+                  <div className="text-sm text-gray-300">Currency: {account.currency}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        
         <div className="space-y-4">
           {isConnected ? (
             <>
               <div className="rounded-lg bg-gray-700 p-4 mb-4">
                 <h3 className="text-lg font-semibold mb-2">Connected Account Details</h3>
+                <p className="text-sm text-gray-300">Account ID: {selectedAccount?.accountId || accountId}</p>
+                <p className="text-sm text-gray-300">Currency: {selectedAccount?.currency}</p>
                 <p className="text-sm text-gray-300">Server: {server}</p>
-                <p className="text-sm text-gray-300">Account ID: {accountId}</p>
                 <p className="text-sm text-gray-300">Markets: {markets.join(", ")}</p>
                 <p className="text-sm text-gray-300">Leverage: {leverage}</p>
                 <p className="text-sm text-gray-300">Active Symbols: {activeSymbols.length}</p>
