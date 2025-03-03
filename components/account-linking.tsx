@@ -353,190 +353,246 @@ export default function DerivAccountLinking() {
       
       // Find the selected server endpoint from DERIV_SERVERS
       const selectedServer = DERIV_SERVERS.find(s => s.id === server) || DERIV_SERVERS[1]; // Default to SVG-Real if not found
-      const serverEndpoint = selectedServer.endpoint;
       
-      // Use the correct WebSocket URL with the proper app_id and server
-      const wsUrl = `wss://${serverEndpoint}/websockets/v3?app_id=${appId}`;
-      console.log('Connecting to Deriv server:', selectedServer.name);
-      console.log('WebSocket URL:', wsUrl);
+      // Define the fallback endpoints in case the primary one fails
+      const fallbackEndpoints = [
+        `wss://${selectedServer.endpoint}/websockets/v3?app_id=${appId}`,
+        'wss://ws.binaryws.com/websockets/v3',
+        'wss://frontend.binaryws.com/websockets/v3',
+        'wss://deriv.com/websockets/v3',
+        'wss://api.deriv.com/websockets/v3'
+      ];
       
-      const ws = new WebSocket(wsUrl);
+      // Initially use the selected server endpoint
+      let retryCount = 0;
+      const maxRetries = 3;
       
-      // Add connection state tracking
-      let connectionEstablished = false;
-      
-      // Add ping interval to keep connection alive
-      let pingInterval: NodeJS.Timeout;
-      
-      // Reduce timeout to 5 seconds for faster feedback
-      const connectionTimeout = setTimeout(() => {
-        if (!connectionEstablished) {
-          console.error('Connection timeout - WebSocket failed to open within 5 seconds');
-          ws.close();
-          handleConnectionError('Connection timeout - please try again', token);
+      const connectWithRetry = () => {
+        if (retryCount > 0) {
+          console.log(`Retrying WebSocket connection (attempt ${retryCount} of ${maxRetries})...`);
         }
-      }, 5000);
-      
-      ws.onopen = () => {
-        clearTimeout(connectionTimeout);
-        connectionEstablished = true;
-        const connectionTime = Date.now() - connectionStartTime;
-        console.log(`2. WebSocket connection opened successfully (took ${connectionTime}ms)`);
-        console.log('3. Sending authorization request to Deriv...');
         
-        // Set up ping interval to keep connection alive
-        pingInterval = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ ping: 1 }));
-          }
-        }, 30000); // Send ping every 30 seconds
+        // Use the appropriate endpoint based on retry count
+        const endpoint = fallbackEndpoints[Math.min(retryCount, fallbackEndpoints.length - 1)];
+        console.log(`Connecting to Deriv server using endpoint: ${endpoint}`);
         
-        const authMessage = {
-          authorize: token,
-          passthrough: { userId: user?.uid }
-        };
-        ws.send(JSON.stringify(authMessage));
-      };
-
-      ws.onmessage = (event) => {
+        let ws: WebSocket;
         try {
-          const response = JSON.parse(event.data);
-          console.log('4. Received message from Deriv:', response.msg_type);
-          
-          // Handle ping response
-          if (response.msg_type === 'ping') {
-            console.log('Received ping response from server');
-            return;
+          ws = new WebSocket(endpoint);
+        } catch (error: any) {
+          console.error('Error creating WebSocket connection:', error);
+          handleRetry(`Failed to create WebSocket: ${error.message}`);
+          return null;
+        }
+        
+        // Add connection state tracking
+        let connectionEstablished = false;
+        
+        // Add ping interval to keep connection alive
+        let pingInterval: NodeJS.Timeout;
+        
+        // Set a timeout for the connection
+        const connectionTimeout = setTimeout(() => {
+          if (!connectionEstablished) {
+            console.error('Connection timeout - WebSocket failed to open within 5 seconds');
+            ws.close();
+            handleRetry('Connection timeout - please try again');
           }
+        }, 5000);
+        
+        ws.onopen = () => {
+          clearTimeout(connectionTimeout);
+          connectionEstablished = true;
+          const connectionTime = Date.now() - connectionStartTime;
+          console.log(`2. WebSocket connection opened successfully (took ${connectionTime}ms)`);
+          console.log('3. Sending authorization request to Deriv...');
           
-          if (response.msg_type === 'authorize') {
-            if (response.error) {
-              console.error('Deriv authorization error:', response.error);
-              handleConnectionError(response.error.message, token);
+          // Set up ping interval to keep connection alive
+          pingInterval = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ ping: 1 }));
+            }
+          }, 30000); // Send ping every 30 seconds
+          
+          const authMessage = {
+            authorize: token,
+            passthrough: { userId: user?.uid }
+          };
+          ws.send(JSON.stringify(authMessage));
+        };
+  
+        ws.onmessage = (event) => {
+          try {
+            const response = JSON.parse(event.data);
+            console.log('4. Received message from Deriv:', response.msg_type);
+            
+            // Handle ping response
+            if (response.msg_type === 'ping') {
+              console.log('Received ping response from server');
+              return;
+            }
+            
+            if (response.msg_type === 'authorize') {
+              if (response.error) {
+                console.error('Deriv authorization error:', response.error);
+                handleRetry(response.error.message);
+              } else {
+                console.log('5. Successfully authorized with Deriv');
+                console.log('6. Starting VPS connection process...');
+                
+                // Start VPS connection in parallel with Deriv setup
+                (async () => {
+                  try {
+                    // Get EA configuration from derivConfigs
+                    const derivConfigRef = doc(db, "derivConfigs", user?.uid || '');
+                    const derivConfigSnap = await getDoc(derivConfigRef);
+                    
+                    if (!derivConfigSnap.exists()) {
+                      throw new Error('EA configuration not found. Please configure your EA settings first.');
+                    }
+  
+                    const derivConfig = derivConfigSnap.data();
+                    
+                    if (!derivConfig.eaConfig) {
+                      throw new Error('EA configuration not found. Please configure your EA settings first.');
+                    }
+  
+                    const vpsResponse = await fetch('/api/vps/connect', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                      },
+                      body: JSON.stringify({
+                        userId: user?.uid,
+                        accountId: response.authorize.loginid,
+                        derivToken: token,
+                        eaConfig: derivConfig.eaConfig
+                      })
+                    });
+  
+                    if (!vpsResponse.ok) {
+                      const errorData = await vpsResponse.json();
+                      throw new Error(errorData.error || `VPS connection failed with status: ${vpsResponse.status}`);
+                    }
+                    
+                    const vpsResult = await vpsResponse.json();
+                    if (!vpsResult.success) {
+                      console.error('VPS connection failed:', vpsResult.error);
+                      throw new Error(vpsResult.error);
+                    }
+                    console.log('7. VPS connection established successfully');
+                    
+                    // Update connection status
+                    setConnectionStatus('connected');
+                    setIsConnected(true);
+                    setIsConnecting(false);
+                    setShowSuccessScreen(true);
+                    toast.success('Successfully connected to Deriv and VPS');
+                    
+                    // Store the WebSocket instance
+                    setWsConnection(ws);
+                    
+                    // Request trading data in parallel
+                    console.log('8. Requesting trading data...');
+                    ws.send(JSON.stringify({
+                      active_symbols: "brief",
+                      product_type: "mt5"
+                    }));
+  
+                    ws.send(JSON.stringify({
+                      account_status: 1,
+                      subscribe: 1
+                    }));
+                  } catch (error: any) {
+                    console.error('VPS connection error:', error);
+                    // Don't retry on 404 errors as they indicate a configuration issue
+                    if (error.message?.includes('404')) {
+                      handleConnectionError('VPS service is not available. Please contact support.', token);
+                    } else {
+                      handleConnectionError('Failed to connect to VPS server: ' + error.message, token);
+                    }
+                  }
+                })();
+              }
+            }
+            
+            if (response.msg_type === 'active_symbols') {
+              console.log('9. Received trading symbols:', response.active_symbols?.length);
+              handleSymbolsResponse(response.active_symbols as DerivSymbol[]);
+            }
+  
+            if (response.msg_type === 'account_status') {
+              console.log('10. Received account status:', response.status);
+              updateAccountStatus(response.status as DerivAccountStatus);
+            }
+          } catch (error: any) {
+            console.error('Error processing WebSocket message:', error);
+            handleConnectionError('Error processing server response: ' + error.message, token);
+          }
+        };
+  
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          clearTimeout(connectionTimeout);
+          if (pingInterval) clearInterval(pingInterval);
+          
+          if (!connectionEstablished) {
+            handleRetry('WebSocket connection error. Please check your internet connection.');
+          }
+        };
+  
+        ws.onclose = (event) => {
+          console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`);
+          clearTimeout(connectionTimeout);
+          if (pingInterval) clearInterval(pingInterval);
+          
+          // Only retry if we haven't already connected successfully
+          if (!connectionEstablished) {
+            // Certain close codes indicate a problem that won't be fixed by retrying
+            const permanentErrorCodes = [1008, 1011]; // Policy violation, internal error
+            
+            if (permanentErrorCodes.includes(event.code)) {
+              handleConnectionError(`Connection closed (${event.code}): ${event.reason || 'Unknown reason'}`, token);
             } else {
-              console.log('5. Successfully authorized with Deriv');
-              console.log('6. Starting VPS connection process...');
-              
-              // Start VPS connection in parallel with Deriv setup
-              (async () => {
-                try {
-                  // Get EA configuration from derivConfigs
-                  const derivConfigRef = doc(db, "derivConfigs", user?.uid || '');
-                  const derivConfigSnap = await getDoc(derivConfigRef);
-                  
-                  if (!derivConfigSnap.exists()) {
-                    throw new Error('EA configuration not found. Please configure your EA settings first.');
-                  }
-
-                  const derivConfig = derivConfigSnap.data();
-                  
-                  if (!derivConfig.eaConfig) {
-                    throw new Error('EA configuration not found. Please configure your EA settings first.');
-                  }
-
-                  const vpsResponse = await fetch('/api/vps/connect', {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({
-                      userId: user?.uid,
-                      accountId: response.authorize.loginid,
-                      derivToken: token,
-                      eaConfig: derivConfig.eaConfig
-                    })
-                  });
-
-                  if (!vpsResponse.ok) {
-                    const errorData = await vpsResponse.json();
-                    throw new Error(errorData.error || `VPS connection failed with status: ${vpsResponse.status}`);
-                  }
-                  
-                  const vpsResult = await vpsResponse.json();
-                  if (!vpsResult.success) {
-                    console.error('VPS connection failed:', vpsResult.error);
-                    throw new Error(vpsResult.error);
-                  }
-                  console.log('7. VPS connection established successfully');
-                  
-                  // Update connection status
-                  setConnectionStatus('connected');
-                  setIsConnected(true);
-                  setIsConnecting(false);
-                  setShowSuccessScreen(true);
-                  toast.success('Successfully connected to Deriv and VPS');
-                  
-                  // Request trading data in parallel
-                  console.log('8. Requesting trading data...');
-                  ws.send(JSON.stringify({
-                    active_symbols: "brief",
-                    product_type: "mt5"
-                  }));
-
-                  ws.send(JSON.stringify({
-                    account_status: 1,
-                    subscribe: 1
-                  }));
-                } catch (error: any) {
-                  console.error('VPS connection error:', error);
-                  // Don't retry on 404 errors as they indicate a configuration issue
-                  if (error.message?.includes('404')) {
-                    handleConnectionError('VPS service is not available. Please contact support.', token);
-                  } else {
-                    handleConnectionError('Failed to connect to VPS server', token);
-                  }
-                }
-              })();
+              handleRetry(`Connection closed (${event.code})`);
             }
           }
+        };
+        
+        return ws;
+      };
+      
+      const handleRetry = (errorMessage: string) => {
+        retryCount++;
+        console.error(`Connection attempt failed: ${errorMessage}`);
+        
+        if (retryCount <= maxRetries) {
+          // Exponential backoff: increase delay with each retry
+          const delay = 1000 * Math.pow(2, retryCount - 1);
+          console.log(`Will retry in ${delay}ms... (${errorMessage})`);
           
-          if (response.msg_type === 'active_symbols') {
-            console.log('9. Received trading symbols:', response.active_symbols?.length);
-            handleSymbolsResponse(response.active_symbols as DerivSymbol[]);
-          }
-
-          if (response.msg_type === 'account_status') {
-            console.log('10. Received account status:', response.status);
-            updateAccountStatus(response.status as DerivAccountStatus);
-          }
-        } catch (error) {
-          console.error('Error processing WebSocket message:', error);
-          handleConnectionError('Error processing server response', token);
+          toast.info(`Connection failed. Retrying in ${Math.round(delay / 1000)} seconds...`);
+          
+          setTimeout(() => {
+            connectWithRetry();
+          }, delay);
+        } else {
+          handleConnectionError(`Connection failed after ${maxRetries} attempts: ${errorMessage}`, token);
         }
       };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        if (!connectionEstablished) {
-          console.error('Connection failed before establishment');
-          setIsConnecting(false);
-          handleConnectionError('Failed to establish connection to Deriv. Please check your internet connection and try again.', token);
-        }
-      };
-
-      ws.onclose = (event) => {
-        console.log('WebSocket connection to Deriv closed:', event.code, event.reason);
-        // Clear ping interval
-        if (pingInterval) {
-          clearInterval(pingInterval);
-        }
-        setIsConnecting(false);
-        if (!connectionEstablished) {
-          handleConnectionClose();
-        }
-      };
-
-      setWsConnection(ws);
+      
+      // Start the connection process
+      const ws = connectWithRetry();
       return ws;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Connection establishment error:', error);
       setIsConnecting(false);
       setConnectionStatus('disconnected');
-      handleConnectionError('Failed to establish connection to Deriv. Please try again.', token);
+      handleConnectionError('Failed to establish connection to Deriv: ' + error.message, token);
       return null;
     }
-  }, [user, handleConnectionClose, handleSymbolsResponse, updateAccountStatus, handleConnectionError, isConnecting, server]);
+  }, [user, handleConnectionClose, handleSymbolsResponse, updateAccountStatus, handleConnectionError, isConnecting, server, getDerivOAuthUrl]);
 
   useEffect(() => {
     let mounted = true;

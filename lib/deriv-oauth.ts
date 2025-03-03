@@ -298,86 +298,181 @@ export const parseOAuthResponse = async (token: string): Promise<DerivAccount[]>
   try {
     console.log('Parsing OAuth response with token');
     
-    // Create a WebSocket connection to get account info
-    return new Promise((resolve, reject) => {
-      const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3');
-      
-      // Set a timeout to prevent hanging
-      const timeoutId = setTimeout(() => {
-        ws.close();
-        reject(new Error('Connection timeout while retrieving account information'));
-      }, 15000);
-      
-      ws.onopen = () => {
-        console.log('WebSocket connection opened for OAuth parsing');
-        // Send authorize request with the token
-        ws.send(JSON.stringify({
-          authorize: token
-        }));
-      };
-      
-      ws.onmessage = (msg) => {
-        try {
-          const data = JSON.parse(msg.data.toString());
-          
-          if (data.error) {
-            clearTimeout(timeoutId);
-            ws.close();
-            reject(new Error(`API error: ${data.error.message}`));
-            return;
-          }
-          
-          if (data.authorize) {
-            console.log('Authorization successful, retrieving account info');
-            
-            // Get account details from the authorize response
-            const accounts: DerivAccount[] = [];
-            
-            if (data.authorize.account_list && Array.isArray(data.authorize.account_list)) {
-              data.authorize.account_list.forEach((account: any) => {
-                accounts.push({
-                  accountId: account.loginid,
-                  accountType: account.account_type,
-                  currency: account.currency,
-                  isVirtual: account.is_virtual === 1,
-                  landingCompany: account.landing_company_name,
-                  token: token,
-                  server: getServerFromAccountType(account.landing_company_name)
-                });
-              });
-            }
-            
-            clearTimeout(timeoutId);
-            ws.close();
-            resolve(accounts);
-          }
-        } catch (error) {
-          clearTimeout(timeoutId);
-          ws.close();
-          reject(error);
-        }
-      };
-      
-      ws.onerror = (error) => {
-        clearTimeout(timeoutId);
-        console.error('WebSocket error during OAuth parsing:', error);
-        reject(new Error('WebSocket connection error'));
-      };
-      
-      ws.onclose = () => {
-        clearTimeout(timeoutId);
-        console.log('WebSocket connection closed for OAuth parsing');
-      };
-    });
+    // Define backup endpoints
+    const wsEndpoints = [
+      'wss://ws.binaryws.com/websockets/v3',
+      'wss://frontend.binaryws.com/websockets/v3',
+      'wss://deriv.com/websockets/v3',
+      'wss://api.deriv.com/websockets/v3'
+    ];
+    
+    return await tryWebSocketConnection(wsEndpoints, token);
   } catch (error) {
     console.error('Error parsing OAuth response:', error);
     throw error;
   }
 };
 
+// Try multiple WebSocket endpoints until one works
+const tryWebSocketConnection = async (endpoints: string[], token: string): Promise<DerivAccount[]> => {
+  // Try each endpoint sequentially
+  for (let i = 0; i < endpoints.length; i++) {
+    try {
+      const accounts = await connectToWebSocket(endpoints[i], token);
+      console.log(`Successfully connected to ${endpoints[i]}`);
+      return accounts;
+    } catch (error) {
+      console.error(`Failed to connect to ${endpoints[i]}:`, error);
+      
+      // If this is the last endpoint, throw the error
+      if (i === endpoints.length - 1) {
+        throw new Error(`All WebSocket connection attempts failed. Last error: ${error.message}`);
+      }
+      
+      // Otherwise, continue to the next endpoint
+      console.log(`Trying next endpoint: ${endpoints[i + 1]}`);
+    }
+  }
+  
+  // This should never be reached due to the error handling above
+  throw new Error('No WebSocket connections succeeded');
+};
+
+// Connect to a specific WebSocket endpoint
+const connectToWebSocket = (endpoint: string, token: string): Promise<DerivAccount[]> => {
+  return new Promise((resolve, reject) => {
+    let isResolved = false;
+    
+    // Create WebSocket with explicit error handling
+    let ws: WebSocket;
+    
+    try {
+      ws = new WebSocket(endpoint);
+    } catch (error) {
+      console.error(`Error creating WebSocket for ${endpoint}:`, error);
+      reject(new Error(`Failed to create WebSocket: ${error.message}`));
+      return;
+    }
+    
+    // Set a timeout to prevent hanging
+    const timeoutId = setTimeout(() => {
+      if (!isResolved) {
+        isResolved = true;
+        ws.close();
+        reject(new Error('Connection timeout while retrieving account information'));
+      }
+    }, 15000);
+    
+    // Handle connection opening
+    ws.onopen = () => {
+      console.log(`WebSocket connection opened for ${endpoint}`);
+      try {
+        // Send authorize request with the token
+        ws.send(JSON.stringify({
+          authorize: token
+        }));
+      } catch (error) {
+        clearTimeout(timeoutId);
+        isResolved = true;
+        ws.close();
+        reject(new Error(`Failed to send authorization message: ${error.message}`));
+      }
+    };
+    
+    // Handle messages
+    ws.onmessage = (msg) => {
+      try {
+        let data;
+        try {
+          data = JSON.parse(msg.data.toString());
+        } catch (parseError) {
+          throw new Error(`Failed to parse WebSocket message: ${parseError.message}`);
+        }
+        
+        if (data.error) {
+          clearTimeout(timeoutId);
+          isResolved = true;
+          ws.close();
+          reject(new Error(`API error: ${data.error.message || 'Unknown API error'}`));
+          return;
+        }
+        
+        if (data.authorize) {
+          console.log('Authorization successful, retrieving account info');
+          
+          // Get account details from the authorize response
+          const accounts: DerivAccount[] = [];
+          
+          if (data.authorize.account_list && Array.isArray(data.authorize.account_list)) {
+            data.authorize.account_list.forEach((account: any) => {
+              accounts.push({
+                accountId: account.loginid || '',
+                accountType: account.account_type || '',
+                currency: account.currency || '',
+                isVirtual: account.is_virtual === 1,
+                landingCompany: account.landing_company_name || '',
+                token: token,
+                server: getServerFromAccountType(account.landing_company_name || '')
+              });
+            });
+          }
+          
+          // If we got accounts, consider it a success
+          if (accounts.length > 0) {
+            clearTimeout(timeoutId);
+            isResolved = true;
+            ws.close();
+            resolve(accounts);
+            return;
+          }
+          
+          // If no accounts were found despite successful authorization
+          clearTimeout(timeoutId);
+          isResolved = true;
+          ws.close();
+          reject(new Error('No trading accounts found in the response'));
+        }
+      } catch (error) {
+        clearTimeout(timeoutId);
+        isResolved = true;
+        ws.close();
+        reject(error);
+      }
+    };
+    
+    // Handle errors
+    ws.onerror = (error) => {
+      console.error(`WebSocket error during OAuth parsing for ${endpoint}:`, error);
+      if (!isResolved) {
+        clearTimeout(timeoutId);
+        isResolved = true;
+        try {
+          ws.close();
+        } catch (closeError) {
+          console.error('Error closing WebSocket after error:', closeError);
+        }
+        reject(new Error('WebSocket connection error'));
+      }
+    };
+    
+    // Handle connection closing
+    ws.onclose = (event) => {
+      console.log(`WebSocket connection closed for ${endpoint}. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`);
+      if (!isResolved) {
+        clearTimeout(timeoutId);
+        isResolved = true;
+        reject(new Error(`WebSocket connection closed unexpectedly. Code: ${event.code}`));
+      }
+    };
+  });
+};
+
 // Helper function to determine server from account type
 const getServerFromAccountType = (landingCompany: string): string => {
-  if (landingCompany.toLowerCase() === 'svg' || landingCompany.toLowerCase().includes('svg')) {
+  if (!landingCompany) return 'deriv';
+  
+  const lcName = landingCompany.toLowerCase();
+  if (lcName === 'svg' || lcName.includes('svg')) {
     return 'svg';
   }
   return 'deriv';
