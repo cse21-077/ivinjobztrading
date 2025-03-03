@@ -22,34 +22,12 @@ const DERIV_SERVERS = [
   { id: "svg-server-03", name: "SVG-Server 03", description: "SVG Backup Server" }
 ]
 
-// Trading pairs by category
-const TRADING_PAIRS = {
-  forex: [
-    { value: "EURUSD", label: "EUR/USD" },
-    { value: "GBPUSD", label: "GBP/USD" },
-    { value: "USDJPY", label: "USD/JPY" },
-    { value: "AUDUSD", label: "AUD/USD" },
-    { value: "USDCAD", label: "USD/CAD" },
-    { value: "NZDUSD", label: "NZD/USD" }
-  ],
-  synthetic_indices: [
-    { value: "R_10", label: "Volatility 10 Index" },
-    { value: "R_25", label: "Volatility 25 Index" },
-    { value: "R_50", label: "Volatility 50 Index" },
-    { value: "R_75", label: "Volatility 75 Index" },
-    { value: "R_100", label: "Volatility 100 Index" }
-  ],
-  commodities: [
-    { value: "XAUUSD", label: "Gold/USD" },
-    { value: "XAGUSD", label: "Silver/USD" },
-    { value: "WTICASH", label: "Oil/USD" }
-  ],
-  cryptocurrencies: [
-    { value: "BTCUSD", label: "Bitcoin/USD" },
-    { value: "ETHUSD", label: "Ethereum/USD" },
-    { value: "LTCUSD", label: "Litecoin/USD" }
-  ]
-}
+const DERIV_MARKETS = [
+  { value: "forex", label: "Forex" },
+  { value: "synthetic_indices", label: "Synthetic Indices" },
+  { value: "commodities", label: "Commodities" },
+  { value: "cryptocurrencies", label: "Cryptocurrencies" }
+]
 
 // Leverage options
 const LEVERAGE_OPTIONS = ["1:50", "1:100", "1:200", "1:500", "1:1000"]
@@ -63,6 +41,8 @@ interface DerivConfig {
   isConnected: boolean;
   lastConnected?: Date;
   selectedSymbols: string[];
+  status: 'disconnected' | 'connecting' | 'connected';
+  activeSymbols: string[];
 }
 
 interface MT4Config {
@@ -77,6 +57,26 @@ interface MT5Config {
   login: string;
   password: string;
   eaName: string;
+}
+
+// Add interfaces for WebSocket responses
+interface DerivSymbol {
+  symbol: string;
+  display_name: string;
+  market: string;
+  market_display_name: string;
+  pip: number;
+  submarket: string;
+  submarket_display_name: string;
+}
+
+interface DerivAccountStatus {
+  status: string;
+  currency_config: {
+    decimal_places: number;
+  };
+  balance: number;
+  login_id: string;
 }
 
 export default function DerivAccountLinking() {
@@ -95,11 +95,19 @@ export default function DerivAccountLinking() {
   const [mt5Server, setMt5Server] = useState("")
   const [mt5Login, setMt5Login] = useState("")
   const [mt5Password, setMt5Password] = useState("")
-  const [selectedCategory, setSelectedCategory] = useState<string>("")
+  const [wsConnection, setWsConnection] = useState<WebSocket | null>(null)
+  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
+  const [availableSymbols, setAvailableSymbols] = useState<string[]>([])
+  const [activeSymbols, setActiveSymbols] = useState<string[]>([])
+  const [retryCount, setRetryCount] = useState(0)
+  const MAX_RETRIES = 3
 
   useEffect(() => {
+    let mounted = true;
+    let wsInstance: WebSocket | null = null;
+
     const fetchUserConfig = async () => {
-      if (user) {
+      if (user && mounted) {
         try {
           const docRef = doc(db, "derivConfigs", user.uid)
           const docSnap = await getDoc(docRef)
@@ -111,16 +119,156 @@ export default function DerivAccountLinking() {
             setMarkets(data.markets || [])
             setLeverage(data.leverage || "")
             setIsConnected(data.isConnected || false)
-            setSelectedSymbols(data.selectedSymbols || [])
+            setActiveSymbols(data.activeSymbols || [])
+            setConnectionStatus(data.status || 'disconnected' as const)
+            
+            if (data.isConnected && mounted) {
+              wsInstance = await establishWebSocketConnection(data.apiToken);
+            }
           }
         } catch (error) {
           console.error("Error fetching config:", error)
-          toast.error("Error retrieving configuration")
+          if (mounted) {
+            toast.error("Error retrieving configuration")
+          }
         }
       }
     }
+
     fetchUserConfig()
+
+    return () => {
+      mounted = false;
+      if (wsInstance) {
+        wsInstance.close();
+      }
+      if (wsConnection) {
+        wsConnection.close();
+      }
+    }
   }, [user])
+
+  const establishWebSocketConnection = (token: string) => {
+    try {
+      setConnectionStatus('connecting');
+      const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3');
+      
+      ws.onopen = () => {
+        console.log('WebSocket connection established');
+        ws.send(JSON.stringify({
+          authorize: token,
+          passthrough: { userId: user?.uid }
+        }));
+      };
+
+      ws.onmessage = (event) => {
+        const response = JSON.parse(event.data);
+        
+        if (response.msg_type === 'authorize') {
+          if (response.error) {
+            handleConnectionError(response.error.message);
+          } else {
+            setConnectionStatus('connected');
+            setIsConnected(true);
+            toast.success('Successfully connected to Deriv');
+            
+            // Request available symbols
+            ws.send(JSON.stringify({
+              active_symbols: "brief",
+              product_type: "basic"
+            }));
+
+            // Subscribe to account status and balance
+            ws.send(JSON.stringify({
+              account_status: 1,
+              subscribe: 1
+            }));
+          }
+        }
+        
+        if (response.msg_type === 'active_symbols') {
+          handleSymbolsResponse(response.active_symbols as DerivSymbol[]);
+        }
+
+        if (response.msg_type === 'account_status') {
+          updateAccountStatus(response.status as DerivAccountStatus);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        handleConnectionError('Connection error occurred');
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket connection closed');
+        handleConnectionClose();
+      };
+
+      setWsConnection(ws);
+      return ws;
+    } catch (error) {
+      handleConnectionError('Failed to establish connection');
+      return null;
+    }
+  };
+
+  const handleConnectionError = (message: string) => {
+    toast.error(message);
+    if (retryCount < MAX_RETRIES) {
+      setRetryCount(prev => prev + 1);
+      setTimeout(() => {
+        toast.info('Retrying connection...');
+        establishWebSocketConnection(apiToken);
+      }, 2000 * Math.pow(2, retryCount)); // Exponential backoff
+    } else {
+      setConnectionStatus('disconnected');
+      handleDisconnect();
+    }
+  };
+
+  const handleConnectionClose = () => {
+    setIsConnected(false);
+    setConnectionStatus('disconnected');
+    if (retryCount < MAX_RETRIES) {
+      handleConnectionError('Connection closed unexpectedly');
+    }
+  };
+
+  const handleSymbolsResponse = (symbols: DerivSymbol[]) => {
+    const availableSyms = symbols.map(s => s.symbol);
+    setAvailableSymbols(availableSyms);
+    
+    // Resubscribe to previously active symbols
+    if (activeSymbols.length > 0) {
+      activeSymbols.forEach(symbol => {
+        if (availableSyms.includes(symbol)) {
+          subscribeToSymbol(symbol);
+        }
+      });
+    }
+  };
+
+  const subscribeToSymbol = (symbol: string) => {
+    if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+      wsConnection.send(JSON.stringify({
+        ticks: symbol,
+        subscribe: 1
+      }));
+    }
+  };
+
+  const updateAccountStatus = async (status: DerivAccountStatus) => {
+    if (user) {
+      await setDoc(doc(db, "derivConfigs", user.uid), {
+        status: status.status,
+        lastUpdated: new Date(),
+        activeSymbols: activeSymbols,
+        balance: status.balance,
+        currency_config: status.currency_config
+      }, { merge: true });
+    }
+  };
 
   const handleMarketToggle = (market: string) => {
     setMarkets(prev => 
@@ -173,7 +321,9 @@ export default function DerivAccountLinking() {
           leverage,
           isConnected: true,
           lastConnected: new Date(),
-          selectedSymbols: selectedSymbols
+          selectedSymbols: selectedSymbols,
+          status: 'connected',
+          activeSymbols: activeSymbols
         }
         
         await setDoc(doc(db, "derivConfigs", user.uid), configData)
@@ -243,6 +393,13 @@ export default function DerivAccountLinking() {
 
   const handleDerivConnect = () => {
     const oauthUrl = getDerivOAuthUrl();
+    // Store connection attempt in Firestore
+    if (user) {
+      setDoc(doc(db, "derivConfigs", user.uid), {
+        connectionAttempt: new Date(),
+        status: 'connecting'
+      }, { merge: true });
+    }
     window.location.href = oauthUrl;
   };
 
@@ -250,6 +407,11 @@ export default function DerivAccountLinking() {
     try {
       setIsLoading(true);
       
+      // Close WebSocket connection
+      if (wsConnection) {
+        wsConnection.close();
+      }
+
       // Disconnect from AWS trading server
       const response = await fetch('/api/mt5/disconnect', {
         method: 'POST',
@@ -266,7 +428,9 @@ export default function DerivAccountLinking() {
         if (user) {
           await setDoc(doc(db, "derivConfigs", user.uid), {
             isConnected: false,
-            lastDisconnected: new Date()
+            lastDisconnected: new Date(),
+            status: 'disconnected',
+            activeSymbols: []
           }, { merge: true });
           
           setIsConnected(false);
@@ -275,7 +439,7 @@ export default function DerivAccountLinking() {
           setAccountId("");
           setMarkets([]);
           setLeverage("");
-          setSelectedSymbols([]);
+          setActiveSymbols([]);
           toast.success("Successfully disconnected your trading account");
         }
       } else {
@@ -300,8 +464,10 @@ export default function DerivAccountLinking() {
           <AlertCircle className="h-4 w-4 text-amber-500" />
           <AlertTitle>Important</AlertTitle>
           <AlertDescription>
-            {isConnected 
+            {connectionStatus === 'connected' 
               ? "Your account is connected and ready for trading. You can disconnect at any time."
+              : connectionStatus === 'connecting'
+              ? "Establishing connection to your Deriv account..."
               : "Connect your Deriv account securely using OAuth. This is the recommended and most secure way to connect your account."}
           </AlertDescription>
         </Alert>
@@ -315,56 +481,13 @@ export default function DerivAccountLinking() {
                 <p className="text-sm text-gray-300">Account ID: {accountId}</p>
                 <p className="text-sm text-gray-300">Markets: {markets.join(", ")}</p>
                 <p className="text-sm text-gray-300">Leverage: {leverage}</p>
-              </div>
-              
-              <div className="rounded-lg bg-gray-700 p-4 mb-4">
-                <h3 className="text-lg font-semibold mb-2">Trading Pairs</h3>
-                <div className="space-y-4">
-                  <Select
-                    value={selectedCategory}
-                    onValueChange={setSelectedCategory}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select market category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.keys(TRADING_PAIRS).map((category) => (
-                        <SelectItem key={category} value={category}>
-                          {category.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-
-                  {selectedCategory && (
-                    <div className="grid grid-cols-2 gap-2">
-                      {TRADING_PAIRS[selectedCategory as keyof typeof TRADING_PAIRS].map((pair) => (
-                        <div key={pair.value} className="flex items-center space-x-2">
-                          <input
-                            type="checkbox"
-                            id={pair.value}
-                            checked={selectedSymbols.includes(pair.value)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setSelectedSymbols([...selectedSymbols, pair.value]);
-                              } else {
-                                setSelectedSymbols(selectedSymbols.filter(s => s !== pair.value));
-                              }
-                            }}
-                            className="rounded border-gray-600"
-                          />
-                          <label htmlFor={pair.value} className="text-sm">{pair.label}</label>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <p className="text-sm text-gray-300">Active Symbols: {activeSymbols.length}</p>
               </div>
               
               <Button 
                 onClick={handleDisconnect}
                 className="w-full bg-red-600 hover:bg-red-700"
-                disabled={isLoading}
+                disabled={isLoading || connectionStatus === 'connecting'}
               >
                 {isLoading ? "Disconnecting..." : "Disconnect Account"}
               </Button>
@@ -373,9 +496,9 @@ export default function DerivAccountLinking() {
             <Button 
               onClick={handleDerivConnect}
               className="w-full"
-              disabled={isLoading}
+              disabled={isLoading || connectionStatus === 'connecting'}
             >
-              {isLoading ? "Connecting..." : "Connect Deriv Account"}
+              {connectionStatus === 'connecting' ? "Connecting..." : "Connect Deriv Account"}
             </Button>
           )}
         </div>
