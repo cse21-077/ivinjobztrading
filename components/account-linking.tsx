@@ -113,18 +113,16 @@ export default function DerivAccountLinking() {
           const docSnap = await getDoc(docRef)
           if (docSnap.exists()) {
             const data = docSnap.data() as DerivConfig
+            // Only set the saved configuration, don't auto-connect
             setApiToken(data.apiToken || "")
             setServer(data.server || "")
             setAccountId(data.accountId || "")
             setMarkets(data.markets || [])
             setLeverage(data.leverage || "")
-            setIsConnected(data.isConnected || false)
             setActiveSymbols(data.activeSymbols || [])
-            setConnectionStatus(data.status || 'disconnected' as const)
-            
-            if (data.isConnected && mounted) {
-              wsInstance = await establishWebSocketConnection(data.apiToken);
-            }
+            // Set initial status as disconnected
+            setIsConnected(false)
+            setConnectionStatus('disconnected')
           }
         } catch (error) {
           console.error("Error fetching config:", error)
