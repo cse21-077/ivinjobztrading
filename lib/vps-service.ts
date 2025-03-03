@@ -55,29 +55,48 @@ export class VPSService {
         const command = new StartInstancesCommand({
           InstanceIds: [this.instanceId]
         });
-        await this.ec2Client.send(command);
+        
+        try {
+          await this.ec2Client.send(command);
+          console.log('Start command sent successfully');
+        } catch (startError: any) {
+          console.error('Error sending start command:', {
+            error: startError.message,
+            code: startError.code,
+            requestId: startError.$metadata?.requestId
+          });
+          throw new Error(`Failed to start VPS: ${startError.message}`);
+        }
         
         // Wait for instance to be running
         let attempts = 0;
         while (attempts < 30) {
+          console.log(`Checking status attempt ${attempts + 1}/30...`);
           const currentStatus = await this.checkInstanceStatus();
+          console.log(`Current status: ${currentStatus}`);
+          
           if (currentStatus === 'running') {
             console.log('VPS started successfully');
             return true;
           }
           if (currentStatus === 'error') {
-            throw new Error('VPS failed to start');
+            throw new Error('VPS failed to start: Instance entered error state');
           }
           await new Promise(resolve => setTimeout(resolve, 2000));
           attempts++;
         }
-        throw new Error('VPS start timeout');
+        throw new Error('VPS start timeout: Instance did not enter running state within 60 seconds');
       }
 
       throw new Error(`VPS is in an invalid state: ${status}`);
-    } catch (error) {
-      console.error('Failed to start VPS:', error);
-      throw new Error('Failed to start VPS instance');
+    } catch (error: any) {
+      console.error('Failed to start VPS:', {
+        error: error.message,
+        code: error.code,
+        metadata: error.$metadata,
+        stack: error.stack
+      });
+      throw error; // Preserve the original error
     }
   }
 

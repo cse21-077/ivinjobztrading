@@ -67,12 +67,42 @@ export async function POST(request: Request) {
       await vpsService.startVPS();
       console.log('VPS started successfully');
     } catch (error: any) {
-      console.error('Failed to start VPS:', error);
+      console.error('Failed to start VPS:', {
+        message: error.message,
+        code: error.code,
+        metadata: error.$metadata,
+        stack: error.stack
+      });
+      
+      // Check for specific AWS errors
+      if (error.code === 'UnauthorizedOperation') {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'VPS access denied',
+            details: 'Please check your VPS credentials and permissions'
+          },
+          { status: 403 }
+        );
+      }
+      
+      if (error.code === 'InvalidInstanceID.NotFound') {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'VPS instance not found',
+            details: 'The specified VPS instance ID does not exist'
+          },
+          { status: 404 }
+        );
+      }
+
       return NextResponse.json(
         { 
           success: false, 
           error: 'Failed to start VPS instance',
-          details: error.message 
+          details: error.message,
+          code: error.code || 'UNKNOWN_ERROR'
         },
         { status: 500 }
       );
