@@ -112,6 +112,7 @@ export default function DerivAccountLinking() {
   const [availableAccounts, setAvailableAccounts] = useState<DerivAccount[]>([])
   const [selectedAccount, setSelectedAccount] = useState<DerivAccount | null>(null)
   const [showAccountSelect, setShowAccountSelect] = useState(false)
+  const [isAccountConfirmed, setIsAccountConfirmed] = useState(false)
 
   const handleDisconnect = useCallback(async () => {
     try {
@@ -314,18 +315,43 @@ export default function DerivAccountLinking() {
 
       try {
         console.log('Fetching user configuration...');
-        // First check for OAuth tokens
+        
+        // Get saved configuration first
+        const configRef = doc(db, "derivConfigs", user.uid);
+        const configSnap = await getDoc(configRef);
+        const savedConfig = configSnap.exists() ? configSnap.data() as DerivConfig : null;
+        
+        // Then get accounts
         const accountsRef = doc(db, "derivAccounts", user.uid);
         const accountsSnap = await getDoc(accountsRef);
         
         if (accountsSnap.exists()) {
           const accounts = accountsSnap.data().accounts;
           console.log('Found Deriv accounts:', accounts);
-          setAvailableAccounts(accounts);
           
           if (accounts && accounts.length > 0) {
-            // If there's only one account, use it automatically
+            setAvailableAccounts(accounts);
+            
+            // If there's a saved account preference and it exists in accounts
+            if (savedConfig?.selectedAccountId) {
+              const savedAccount = accounts.find((acc: DerivAccount) => acc.accountId === savedConfig.selectedAccountId);
+              if (savedAccount) {
+                console.log('Using previously selected account:', savedAccount.accountId);
+                setSelectedAccount(savedAccount);
+                if (!wsConnection && connectionStatus === 'disconnected') {
+                  setIsConnecting(true);
+                  connectionAttempted = true;
+                  wsInstance = establishWebSocketConnection(savedAccount.token);
+                  setApiToken(savedAccount.token);
+                  setAccountId(savedAccount.accountId);
+                }
+                return;
+              }
+            }
+            
+            // If no saved preference or saved account not found
             if (accounts.length === 1) {
+              // Single account - use it automatically
               setSelectedAccount(accounts[0]);
               if (!wsConnection && connectionStatus === 'disconnected') {
                 setIsConnecting(true);
@@ -335,7 +361,7 @@ export default function DerivAccountLinking() {
                 setAccountId(accounts[0].accountId);
               }
             } else {
-              // If multiple accounts, show selection dialog
+              // Multiple accounts - show selection
               setShowAccountSelect(true);
             }
           }
@@ -343,67 +369,72 @@ export default function DerivAccountLinking() {
           console.log('No Deriv accounts found in Firestore');
         }
 
-        // Then fetch other config
-        const docRef = doc(db, "derivConfigs", user.uid)
-        const docSnap = await getDoc(docRef)
-        if (docSnap.exists()) {
-          const data = docSnap.data() as DerivConfig
-          console.log('Found Deriv configuration:', data);
-          setServer(data.server || "")
-          setMarkets(data.markets || [])
-          setLeverage(data.leverage || "")
-          setActiveSymbols(data.activeSymbols || [])
-          
-          // If there's a previously selected account, use it
-          if (data.selectedAccountId && availableAccounts.length > 0) {
-            const savedAccount = availableAccounts.find(acc => acc.accountId === data.selectedAccountId);
-            if (savedAccount) {
-              setSelectedAccount(savedAccount);
-              setShowAccountSelect(false);
-            }
-          }
+        // Set other configuration if available
+        if (savedConfig) {
+          console.log('Found Deriv configuration:', savedConfig);
+          setServer(savedConfig.server || "");
+          setMarkets(savedConfig.markets || []);
+          setLeverage(savedConfig.leverage || "");
+          setActiveSymbols(savedConfig.activeSymbols || []);
         }
       } catch (error) {
-        console.error("Error fetching config:", error)
+        console.error("Error fetching config:", error);
         if (mounted) {
-          toast.error("Error retrieving configuration")
+          toast.error("Error retrieving configuration");
         }
       }
-    }
+    };
 
-    fetchUserConfig()
+    fetchUserConfig();
 
     return () => {
       mounted = false;
       if (wsInstance) {
         wsInstance.close();
       }
-    }
-  }, [user, wsConnection, establishWebSocketConnection, isConnecting, connectionStatus, availableAccounts]);
+    };
+  }, [user, wsConnection, establishWebSocketConnection, isConnecting, connectionStatus]);
 
-  const handleAccountSelect = async (account: DerivAccount) => {
+  const handleAccountSelect = useCallback(async (account: DerivAccount) => {
+    setSelectedAccount(account);
+    setIsAccountConfirmed(false);
+  }, []);
+
+  const handleAccountConfirm = useCallback(async () => {
+    if (!selectedAccount || !user) return;
+
     try {
-      setSelectedAccount(account);
+      setIsAccountConfirmed(true);
       setShowAccountSelect(false);
       setIsConnecting(true);
       
       // Save selected account preference
-      if (user) {
-        await setDoc(doc(db, "derivConfigs", user.uid), {
-          selectedAccountId: account.accountId
-        }, { merge: true });
-      }
+      await setDoc(doc(db, "derivConfigs", user.uid), {
+        selectedAccountId: selectedAccount.accountId,
+        status: 'connecting'
+      }, { merge: true });
       
       // Establish connection with selected account
-      establishWebSocketConnection(account.token);
-      setApiToken(account.token);
-      setAccountId(account.accountId);
+      establishWebSocketConnection(selectedAccount.token);
+      setApiToken(selectedAccount.token);
+      setAccountId(selectedAccount.accountId);
     } catch (error) {
-      console.error("Error selecting account:", error);
-      toast.error("Failed to select account");
+      console.error("Error confirming account:", error);
+      toast.error("Failed to confirm account");
       setIsConnecting(false);
+      setIsAccountConfirmed(false);
     }
-  };
+  }, [user, selectedAccount, establishWebSocketConnection]);
+
+  const handleChangeAccount = useCallback(() => {
+    setShowAccountSelect(true);
+    setIsAccountConfirmed(false);
+    if (wsConnection) {
+      wsConnection.close();
+    }
+    setConnectionStatus('disconnected');
+    setIsConnected(false);
+  }, [wsConnection]);
 
   const handleMarketToggle = (market: string) => {
     setMarkets(prev => 
@@ -563,19 +594,31 @@ export default function DerivAccountLinking() {
           </AlertDescription>
         </Alert>
         
-        {showAccountSelect && availableAccounts.length > 0 && (
+        {(showAccountSelect || !isAccountConfirmed) && availableAccounts.length > 0 && (
           <div className="mb-6">
-            <h3 className="text-lg font-semibold mb-4">Select Trading Account</h3>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Select Trading Account</h3>
+              {selectedAccount && !isAccountConfirmed && (
+                <Button
+                  onClick={handleAccountConfirm}
+                  className="bg-green-600 hover:bg-green-700"
+                  disabled={isConnecting}
+                >
+                  Confirm Selection
+                </Button>
+              )}
+            </div>
             <div className="space-y-2">
               {availableAccounts.map((account) => (
                 <button
                   key={account.accountId}
                   onClick={() => handleAccountSelect(account)}
+                  disabled={isConnecting}
                   className={`w-full p-4 rounded-lg text-left transition-colors ${
                     selectedAccount?.accountId === account.accountId
                       ? 'bg-blue-600 hover:bg-blue-700'
                       : 'bg-gray-700 hover:bg-gray-600'
-                  }`}
+                  } ${isConnecting ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   <div className="font-medium">Account ID: {account.accountId}</div>
                   <div className="text-sm text-gray-300">Currency: {account.currency}</div>
@@ -589,7 +632,16 @@ export default function DerivAccountLinking() {
           {isConnected ? (
             <>
               <div className="rounded-lg bg-gray-700 p-4 mb-4">
-                <h3 className="text-lg font-semibold mb-2">Connected Account Details</h3>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-lg font-semibold">Connected Account Details</h3>
+                  <Button
+                    onClick={handleChangeAccount}
+                    className="bg-blue-600 hover:bg-blue-700"
+                    disabled={isLoading || connectionStatus === 'connecting'}
+                  >
+                    Change Account
+                  </Button>
+                </div>
                 <p className="text-sm text-gray-300">Account ID: {selectedAccount?.accountId || accountId}</p>
                 <p className="text-sm text-gray-300">Currency: {selectedAccount?.currency}</p>
                 <p className="text-sm text-gray-300">Server: {server}</p>
