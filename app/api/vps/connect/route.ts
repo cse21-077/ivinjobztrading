@@ -30,13 +30,40 @@ export async function POST(request: Request) {
     
     // Get request body
     const { userId, accountId, token: derivToken, eaConfig } = await request.json();
-    console.log('Received connection request for user:', userId);
+    console.log('Received request data:', {
+      hasUserId: !!userId,
+      hasAccountId: !!accountId,
+      hasDerivToken: !!derivToken,
+      hasEaConfig: !!eaConfig,
+      eaConfigFields: eaConfig ? {
+        hasServer: !!eaConfig.server,
+        hasLogin: !!eaConfig.login,
+        hasPassword: !!eaConfig.password,
+        hasEaName: !!eaConfig.eaName,
+        hasPairs: !!eaConfig.pairs,
+        pairs: eaConfig.pairs
+      } : 'No EA config provided'
+    });
     
     // Validate request body
     if (!userId || !accountId || !derivToken || !eaConfig) {
-      console.error('Missing required request fields');
+      console.error('Missing required request fields:', {
+        userId: !userId ? 'missing' : 'present',
+        accountId: !accountId ? 'missing' : 'present',
+        derivToken: !derivToken ? 'missing' : 'present',
+        eaConfig: !eaConfig ? 'missing' : 'present'
+      });
       return NextResponse.json(
-        { success: false, error: 'Missing required request fields' },
+        { 
+          success: false, 
+          error: 'Missing required request fields',
+          details: `Missing: ${[
+            !userId ? 'userId' : null,
+            !accountId ? 'accountId' : null,
+            !derivToken ? 'derivToken' : null,
+            !eaConfig ? 'eaConfig' : null
+          ].filter(Boolean).join(', ')}`
+        },
         { status: 400 }
       );
     }
@@ -50,9 +77,25 @@ export async function POST(request: Request) {
 
     // Validate required fields
     if (!eaConfig?.server || !eaConfig?.login || !eaConfig?.password || !eaConfig?.eaName || !eaConfig?.pairs) {
-      console.error('Missing required EA configuration fields');
+      console.error('Missing required EA configuration fields:', {
+        server: !eaConfig.server ? 'missing' : 'present',
+        login: !eaConfig.login ? 'missing' : 'present',
+        password: !eaConfig.password ? 'missing' : 'present',
+        eaName: !eaConfig.eaName ? 'missing' : 'present',
+        pairs: !eaConfig.pairs ? 'missing' : 'present'
+      });
       return NextResponse.json(
-        { success: false, error: 'Missing required EA configuration fields' },
+        { 
+          success: false, 
+          error: 'Missing required EA configuration fields',
+          details: `Missing: ${[
+            !eaConfig.server ? 'server' : null,
+            !eaConfig.login ? 'login' : null,
+            !eaConfig.password ? 'password' : null,
+            !eaConfig.eaName ? 'eaName' : null,
+            !eaConfig.pairs ? 'pairs' : null
+          ].filter(Boolean).join(', ')}`
+        },
         { status: 400 }
       );
     }

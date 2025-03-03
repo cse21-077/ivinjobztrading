@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { toast } from "sonner"  // Importing Sonner's toast
 import { getDerivOAuthUrl } from "@/lib/deriv-oauth";
 
@@ -116,6 +117,7 @@ export default function DerivAccountLinking() {
   const [isAccountConfirmed, setIsAccountConfirmed] = useState(false)
   const [showSuccessScreen, setShowSuccessScreen] = useState(false)
   const [tradingMode, setTradingMode] = useState<'automated' | null>(null)
+  const [showEaConfigDialog, setShowEaConfigDialog] = useState(false)
 
   const handleDisconnect = useCallback(async () => {
     try {
@@ -172,11 +174,18 @@ export default function DerivAccountLinking() {
 
   const handleConnectionError = useCallback((message: string, token?: string) => {
     console.error('Connection error:', message);
+    
+    // Show dialog for EA configuration errors
+    if (message.includes('EA configuration not found')) {
+      setShowEaConfigDialog(true);
+      return;
+    }
+    
     toast.error(message);
     setIsConnecting(false);
     
     if (retryCount < MAX_RETRIES) {
-      const backoffTime = Math.min(2000 * Math.pow(2, retryCount), 10000); // Max 10 seconds
+      const backoffTime = Math.min(2000 * Math.pow(2, retryCount), 10000);
       console.log(`Retrying connection in ${backoffTime}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
       
       setRetryCount(prev => prev + 1);
@@ -322,37 +331,37 @@ export default function DerivAccountLinking() {
               // Start VPS connection in parallel with Deriv setup
               (async () => {
                 try {
-                  // Get EA configuration from Firestore
-                  const eaConfigRef = doc(db, "eaConfigs", user?.uid || '');
-                  const eaConfigSnap = await getDoc(eaConfigRef);
+                  // Get EA configuration from derivConfigs
+                  const derivConfigRef = doc(db, "derivConfigs", user?.uid || '');
+                  const derivConfigSnap = await getDoc(derivConfigRef);
                   
-                  if (!eaConfigSnap.exists()) {
+                  if (!derivConfigSnap.exists()) {
                     throw new Error('EA configuration not found. Please configure your EA settings first.');
                   }
 
-                  const eaConfig = eaConfigSnap.data();
+                  const derivConfig = derivConfigSnap.data();
+                  
+                  if (!derivConfig.eaConfig) {
+                    throw new Error('EA configuration not found. Please configure your EA settings first.');
+                  }
 
                   const vpsResponse = await fetch('/api/vps/connect', {
                     method: 'POST',
                     headers: {
-                      'Content-Type': 'application/json'
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${token}`
                     },
                     body: JSON.stringify({
                       userId: user?.uid,
                       accountId: response.authorize.loginid,
-                      token: token,
-                      eaConfig: {
-                        server: eaConfig.server,
-                        login: eaConfig.login,
-                        password: eaConfig.password,
-                        eaName: eaConfig.eaName,
-                        pairs: eaConfig.pairs
-                      }
+                      derivToken: token,
+                      eaConfig: derivConfig.eaConfig
                     })
                   });
 
                   if (!vpsResponse.ok) {
-                    throw new Error(`VPS connection failed with status: ${vpsResponse.status}`);
+                    const errorData = await vpsResponse.json();
+                    throw new Error(errorData.error || `VPS connection failed with status: ${vpsResponse.status}`);
                   }
                   
                   const vpsResult = await vpsResponse.json();
@@ -719,6 +728,43 @@ export default function DerivAccountLinking() {
     }
   }, [user, selectedAccount]);
 
+  // Add EA Configuration Dialog component
+  const EaConfigDialog = () => (
+    <Dialog open={showEaConfigDialog} onOpenChange={setShowEaConfigDialog}>
+      <DialogContent className="bg-gray-800 text-gray-200">
+        <DialogHeader>
+          <DialogTitle>EA Configuration Required</DialogTitle>
+          <DialogDescription>
+            Before connecting to the trading server, you need to configure your EA settings first.
+            This includes selecting your:
+            <ul className="list-disc list-inside mt-2 space-y-1">
+              <li>Trading Market (Synthetic Indices/Forex)</li>
+              <li>Trading Pair (e.g., Volatility 75)</li>
+              <li>Trading Server</li>
+            </ul>
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex flex-col sm:flex-row gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setShowEaConfigDialog(false)}
+            className="sm:order-1"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={() => {
+              window.location.href = '/dashboard/ea-configuration';
+            }}
+            className="bg-blue-600 hover:bg-blue-700 sm:order-2"
+          >
+            Configure EA Settings
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
   return (
     <Card className="bg-gray-800 text-gray-200">
       <CardHeader className="px-4 sm:px-6 text-gray-200">
@@ -866,6 +912,7 @@ export default function DerivAccountLinking() {
           </>
         )}
       </CardContent>
+      <EaConfigDialog />
     </Card>
   )
 }

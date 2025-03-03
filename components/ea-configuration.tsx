@@ -3,240 +3,215 @@
 import type React from "react"
 import { useState, useEffect } from "react"
 import { useAuthState } from "react-firebase-hooks/auth"
-import { doc, getDoc, writeBatch } from "firebase/firestore"
+import { doc, setDoc } from "firebase/firestore"
 import { auth, db } from "@/lib/firebase"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { fetchDerivSymbols } from "@/lib/deriv-api"
 import { toast } from "sonner"
+import { useDerivAccount } from "@/hooks/use-deriv"
 
-interface DerivSymbol {
+interface TradingPair {
   symbol: string;
-  market: string;
   display_name: string;
-  pip: number;
-  pip_value: number;
-  min_stake: number;
-  max_stake: number;
 }
+
+const TRADING_PAIRS: Record<string, TradingPair[]> = {
+  synthetic_indices: [
+    { symbol: "1HZ75V", display_name: "Volatility 75 Index" },
+    { symbol: "1HZ100V", display_name: "Volatility 100 Index" },
+    { symbol: "1HZ50V", display_name: "Volatility 50 Index" }
+  ],
+  forex: [
+    { symbol: "frxEURUSD", display_name: "EUR/USD" },
+    { symbol: "frxGBPUSD", display_name: "GBP/USD" },
+    { symbol: "frxUSDJPY", display_name: "USD/JPY" }
+  ]
+}
+
+const EA_NAME = "The Arm"
 
 export default function EAConfiguration() {
   const [user] = useAuthState(auth)
-  const [isEAEnabled, setIsEAEnabled] = useState(false)
-  const [selectedMarket, setSelectedMarket] = useState<string>("")
-  const [selectedSymbol, setSelectedSymbol] = useState<string>("")
-  const [lotSize, setLotSize] = useState("0.01")
-  const [symbols, setSymbols] = useState<{ forex: DerivSymbol[], synthetic_indices: DerivSymbol[] }>({ forex: [], synthetic_indices: [] })
+  const { activeAccount, isConnected } = useDerivAccount()
+  const [selectedMarket, setSelectedMarket] = useState<string>("synthetic_indices")
+  const [selectedPair, setSelectedPair] = useState<string>("1HZ75V")
   const [isLoading, setIsLoading] = useState(false)
-  const [riskLevel, setRiskLevel] = useState<'low' | 'medium' | 'high'>('medium')
-  const [maxTrades, setMaxTrades] = useState(3)
-  const [stopLoss, setStopLoss] = useState(50)
-  const [takeProfit, setTakeProfit] = useState(100)
-  const [tradingHours, setTradingHours] = useState<'24/7' | 'market_hours' | 'custom'>('24/7')
+  const [availableMarkets, setAvailableMarkets] = useState<string[]>([])
 
   useEffect(() => {
-    const fetchConfig = async () => {
-      if (user) {
-        try {
-          // Fetch EA config
-          const eaConfigRef = doc(db, "eaConfigs", user.uid)
-          const eaConfigSnap = await getDoc(eaConfigRef)
-          if (eaConfigSnap.exists()) {
-            const data = eaConfigSnap.data()
-            setIsEAEnabled(data.isEAEnabled || false)
-            setSelectedMarket(data.market || "")
-            setSelectedSymbol(data.symbol || "")
-            setLotSize(data.lotSize || "0.01")
-            setRiskLevel(data.riskLevel || 'medium')
-            setMaxTrades(data.maxTrades || 3)
-            setStopLoss(data.stopLoss || 50)
-            setTakeProfit(data.takeProfit || 100)
-            setTradingHours(data.tradingHours || '24/7')
-          }
+    if (!activeAccount || !isConnected) return
 
-          // Fetch Deriv symbols
-          const symbolsRef = doc(db, "system", "derivSymbols")
-          const symbolsSnap = await getDoc(symbolsRef)
-          if (symbolsSnap.exists()) {
-            const data = symbolsSnap.data()
-            setSymbols({
-              forex: data.forex || [],
-              synthetic_indices: data.synthetic_indices || []
-            })
-          }
-        } catch (error) {
-          console.error("Error fetching config:", error)
-          toast.error("Failed to load configuration")
-        }
-      }
+    // Set available markets based on account type
+    const accountType = activeAccount.type
+    switch(accountType) {
+      case 'financial':
+        setAvailableMarkets(['forex'])
+        setSelectedMarket('forex')
+        setSelectedPair('frxEURUSD')
+        break
+      case 'synthetic':
+        setAvailableMarkets(['synthetic_indices'])
+        setSelectedMarket('synthetic_indices')
+        setSelectedPair('1HZ75V')
+        break
+      case 'standard':
+        setAvailableMarkets(['forex', 'synthetic_indices'])
+        break
+      default:
+        toast.error("Unknown account type")
+        return
     }
-    fetchConfig()
-  }, [user])
+  }, [activeAccount, isConnected])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!user) return
+    if (!user || !activeAccount || !isConnected) {
+      toast.error("Please ensure your Deriv account is connected")
+      return
+    }
 
     setIsLoading(true)
     try {
-      const batch = writeBatch(db)
-      const eaConfigRef = doc(db, "eaConfigs", user.uid)
-      
-      batch.set(
-        eaConfigRef,
-        {
-          isEAEnabled,
-          market: selectedMarket,
-          symbol: selectedSymbol,
-          lotSize: parseFloat(lotSize),
-          riskLevel,
-          maxTrades,
-          stopLoss,
-          takeProfit,
-          tradingHours,
-          lastUpdated: new Date()
-        },
-        { merge: true }
-      )
+      const eaConfig = {
+        server: activeAccount.server,
+        eaName: EA_NAME,
+        pairs: [selectedPair],
+        lotSize: 0.01
+      }
 
-      await batch.commit()
-      toast.success("EA Configuration saved successfully!")
-    } catch (error) {
-      console.error("Error saving config:", error)
-      toast.error("Failed to save configuration")
+      // Save to derivConfigs for VPS connection with real-time token
+      const derivConfigRef = doc(db, "derivConfigs", user.uid)
+      await setDoc(derivConfigRef, {
+        eaConfig,
+        lastUpdated: new Date(),
+        status: 'ready_to_connect',
+        derivToken: activeAccount.token
+      })
+
+      // Make the VPS connection request
+      const response = await fetch('/api/vps/connect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user.uid,
+          accountId: activeAccount.id,
+          derivToken: activeAccount.token,
+          eaConfig
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to connect to VPS')
+      }
+
+      // Only save to eaConfigs after successful VPS connection
+      const eaConfigRef = doc(db, "eaConfigs", user.uid)
+      await setDoc(eaConfigRef, {
+        market: selectedMarket,
+        pair: selectedPair,
+        lotSize: 0.01,
+        eaName: EA_NAME,
+        server: activeAccount.server,
+        lastUpdated: new Date(),
+        status: 'connected'
+      })
+
+      toast.success("Trading configuration saved and connected to VPS!")
+    } catch (error: any) {
+      console.error("Error:", error)
+      toast.error(error.message || "Failed to save configuration")
     } finally {
       setIsLoading(false)
     }
   }
 
-  const getAvailableSymbols = () => {
-    if (!selectedMarket) return []
-    return symbols[selectedMarket as keyof typeof symbols] || []
+  const getCurrentPairDisplay = () => {
+    return TRADING_PAIRS[selectedMarket]?.find(p => p.symbol === selectedPair)?.display_name || "Select pair"
+  }
+
+  if (!isConnected || !activeAccount) {
+    return (
+      <Card className="bg-gray-800 text-gray-200">
+        <CardHeader className="px-4 sm:px-6">
+          <CardTitle className="text-lg sm:text-xl">The Arm Configuration</CardTitle>
+          <CardDescription>Please connect your Deriv account first</CardDescription>
+        </CardHeader>
+        <CardContent className="px-4 sm:px-6">
+          <div className="text-center py-6">
+            Please connect and select a Deriv account to configure trading settings.
+          </div>
+        </CardContent>
+      </Card>
+    )
   }
 
   return (
     <Card className="bg-gray-800 text-gray-200">
       <CardHeader className="px-4 sm:px-6">
-        <CardTitle className="text-lg sm:text-xl">EA Configuration</CardTitle>
-        <CardDescription>Configure your Expert Advisor settings</CardDescription>
+        <CardTitle className="text-lg sm:text-xl">The Arm Configuration</CardTitle>
+        <CardDescription>Configure trading settings for your {activeAccount.type} account</CardDescription>
       </CardHeader>
       <CardContent className="px-4 sm:px-6">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="ea-toggle">Enable EA</Label>
-            <Switch id="ea-toggle" checked={isEAEnabled} onCheckedChange={setIsEAEnabled} />
-          </div>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {availableMarkets.length > 1 && (
+            <div className="space-y-2">
+              <Label htmlFor="market">Market Type</Label>
+              <Select 
+                value={selectedMarket} 
+                onValueChange={(value) => {
+                  setSelectedMarket(value)
+                  setSelectedPair(TRADING_PAIRS[value][0].symbol)
+                }}
+              >
+                <SelectTrigger id="market" className="w-full bg-gray-700 border-gray-600">
+                  <SelectValue placeholder="Select market type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableMarkets.includes('synthetic_indices') && (
+                    <SelectItem value="synthetic_indices">Synthetic Indices</SelectItem>
+                  )}
+                  {availableMarkets.includes('forex') && (
+                    <SelectItem value="forex">Forex</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="space-y-2">
-            <Label htmlFor="market">Market</Label>
-            <Select value={selectedMarket} onValueChange={setSelectedMarket}>
-              <SelectTrigger id="market" className="w-full">
-                <SelectValue placeholder="Select market" />
+            <Label htmlFor="pair">Trading Pair</Label>
+            <Select 
+              value={selectedPair}
+              onValueChange={setSelectedPair}
+            >
+              <SelectTrigger id="pair" className="w-full bg-gray-700 border-gray-600">
+                <SelectValue placeholder="Select trading pair">
+                  {getCurrentPairDisplay()}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="forex">Forex</SelectItem>
-                <SelectItem value="synthetic_indices">Synthetic Indices</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="symbol">Trading Pair</Label>
-            <Select value={selectedSymbol} onValueChange={setSelectedSymbol}>
-              <SelectTrigger id="symbol" className="w-full">
-                <SelectValue placeholder="Select trading pair" />
-              </SelectTrigger>
-              <SelectContent>
-                {getAvailableSymbols().map((symbol) => (
-                  <SelectItem key={symbol.symbol} value={symbol.symbol}>
-                    {symbol.display_name}
+                {TRADING_PAIRS[selectedMarket]?.map((pair) => (
+                  <SelectItem key={pair.symbol} value={pair.symbol}>
+                    {pair.display_name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="lot-size">Lot Size</Label>
-            <Input
-              id="lot-size"
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={lotSize}
-              onChange={(e) => setLotSize(e.target.value)}
-              placeholder="Enter lot size"
-            />
+          <div className="pt-2">
+            <Button 
+              type="submit" 
+              className="w-full" 
+              disabled={isLoading}
+            >
+              {isLoading ? "Connecting..." : "Connect EA"}
+            </Button>
           </div>
-
-          <div className="space-y-2">
-            <Label>Risk Level</Label>
-            <Select value={riskLevel} onValueChange={(value: 'low' | 'medium' | 'high') => setRiskLevel(value)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="low">Low Risk</SelectItem>
-                <SelectItem value="medium">Medium Risk</SelectItem>
-                <SelectItem value="high">High Risk</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Maximum Concurrent Trades</Label>
-            <Input
-              type="number"
-              value={maxTrades}
-              onChange={(e) => setMaxTrades(parseInt(e.target.value))}
-              min={1}
-              max={5}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Stop Loss (pips)</Label>
-            <Input
-              type="number"
-              value={stopLoss}
-              onChange={(e) => setStopLoss(parseInt(e.target.value))}
-              min={10}
-              max={200}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Take Profit (pips)</Label>
-            <Input
-              type="number"
-              value={takeProfit}
-              onChange={(e) => setTakeProfit(parseInt(e.target.value))}
-              min={20}
-              max={400}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Trading Hours</Label>
-            <Select value={tradingHours} onValueChange={(value: '24/7' | 'market_hours' | 'custom') => setTradingHours(value)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="24/7">24/7 Trading</SelectItem>
-                <SelectItem value="market_hours">Market Hours Only</SelectItem>
-                <SelectItem value="custom">Custom Hours</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading ? "Saving..." : "Save Configuration"}
-          </Button>
         </form>
       </CardContent>
     </Card>
