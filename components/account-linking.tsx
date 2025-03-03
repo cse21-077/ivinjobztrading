@@ -104,7 +104,7 @@ export default function DerivAccountLinking() {
 
   useEffect(() => {
     let mounted = true;
-    let wsInstance: WebSocket | null = null;
+    const wsInstance: WebSocket | null = null;
 
     const fetchUserConfig = async () => {
       if (user && mounted) {
@@ -137,14 +137,11 @@ export default function DerivAccountLinking() {
 
     return () => {
       mounted = false;
-      if (wsInstance) {
-        wsInstance.close();
-      }
       if (wsConnection) {
         wsConnection.close();
       }
     }
-  }, [user])
+  }, [user, wsConnection])
 
   const establishWebSocketConnection = (token: string) => {
     try {
