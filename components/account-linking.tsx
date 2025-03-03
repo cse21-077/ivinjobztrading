@@ -357,10 +357,10 @@ export default function DerivAccountLinking() {
       // Define the fallback endpoints in case the primary one fails
       const fallbackEndpoints = [
         `wss://${selectedServer.endpoint}/websockets/v3?app_id=${appId}`,
-        'wss://ws.binaryws.com/websockets/v3',
-        'wss://frontend.binaryws.com/websockets/v3',
-        'wss://deriv.com/websockets/v3',
-        'wss://api.deriv.com/websockets/v3'
+        `wss://ws.binaryws.com/websockets/v3?app_id=${appId}`,
+        `wss://frontend.binaryws.com/websockets/v3?app_id=${appId}`,
+        `wss://deriv.com/websockets/v3?app_id=${appId}`,
+        `wss://api.deriv.com/websockets/v3?app_id=${appId}`
       ];
       
       // Initially use the selected server endpoint
@@ -394,11 +394,13 @@ export default function DerivAccountLinking() {
         // Set a timeout for the connection
         const connectionTimeout = setTimeout(() => {
           if (!connectionEstablished) {
-            console.error('Connection timeout - WebSocket failed to open within 5 seconds');
-            ws.close();
+            console.error('Connection timeout - WebSocket failed to open within 10 seconds');
+            if (ws && ws.readyState !== WebSocket.CLOSED) {
+              ws.close();
+            }
             handleRetry('Connection timeout - please try again');
           }
-        }, 5000);
+        }, 10000); // Increased timeout to 10 seconds
         
         ws.onopen = () => {
           clearTimeout(connectionTimeout);
@@ -435,6 +437,8 @@ export default function DerivAccountLinking() {
             if (response.msg_type === 'authorize') {
               if (response.error) {
                 console.error('Deriv authorization error:', response.error);
+                clearInterval(pingInterval);
+                ws.close();
                 handleRetry(response.error.message);
               } else {
                 console.log('5. Successfully authorized with Deriv');
@@ -538,19 +542,21 @@ export default function DerivAccountLinking() {
           if (pingInterval) clearInterval(pingInterval);
           
           if (!connectionEstablished) {
-            handleRetry('WebSocket connection error. Please check your internet connection.');
+            // Log additional diagnostic info
+            console.log(`WebSocket error details - URL: ${endpoint}, readyState: ${ws.readyState}`);
+            handleRetry('WebSocket connection error. Please check your internet connection and firewall settings.');
           }
         };
   
         ws.onclose = (event) => {
-          console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`);
+          console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}, URL: ${endpoint}`);
           clearTimeout(connectionTimeout);
           if (pingInterval) clearInterval(pingInterval);
           
           // Only retry if we haven't already connected successfully
           if (!connectionEstablished) {
             // Certain close codes indicate a problem that won't be fixed by retrying
-            const permanentErrorCodes = [1008, 1011]; // Policy violation, internal error
+            const permanentErrorCodes = [1008, 1011, 1015]; // Policy violation, internal error, TLS error
             
             if (permanentErrorCodes.includes(event.code)) {
               handleConnectionError(`Connection closed (${event.code}): ${event.reason || 'Unknown reason'}`, token);
@@ -569,15 +575,20 @@ export default function DerivAccountLinking() {
         
         if (retryCount <= maxRetries) {
           // Exponential backoff: increase delay with each retry
-          const delay = 1000 * Math.pow(2, retryCount - 1);
-          console.log(`Will retry in ${delay}ms... (${errorMessage})`);
+          const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 10000); // Cap at 10 seconds
+          console.log(`Will retry in ${delay}ms... (attempt ${retryCount} of ${maxRetries})`);
           
-          toast.info(`Connection failed. Retrying in ${Math.round(delay / 1000)} seconds...`);
+          toast.info(`Connection failed. Retrying in ${Math.round(delay / 1000)} seconds...`, {
+            toastId: 'connection-retry' // Prevent multiple toasts
+          });
           
           setTimeout(() => {
             connectWithRetry();
           }, delay);
         } else {
+          console.error(`Failed after ${maxRetries} attempts. Last error: ${errorMessage}`);
+          setIsConnecting(false);
+          setConnectionStatus('disconnected');
           handleConnectionError(`Connection failed after ${maxRetries} attempts: ${errorMessage}`, token);
         }
       };
@@ -596,10 +607,8 @@ export default function DerivAccountLinking() {
 
   useEffect(() => {
     let mounted = true;
-    const connectionAttempted = false;
-
     const fetchUserConfig = async () => {
-      if (!user || !mounted || connectionAttempted) {
+      if (!user || !mounted) {
         return;
       }
 
