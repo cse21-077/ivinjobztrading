@@ -171,9 +171,14 @@ export default function DerivAccountLinking() {
   }, [user, wsConnection]);
 
   const handleConnectionError = useCallback((message: string, token?: string) => {
+    console.error('Connection error:', message);
     toast.error(message);
     setIsConnecting(false);
+    
     if (retryCount < MAX_RETRIES) {
+      const backoffTime = Math.min(2000 * Math.pow(2, retryCount), 10000); // Max 10 seconds
+      console.log(`Retrying connection in ${backoffTime}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+      
       setRetryCount(prev => prev + 1);
       if (token) {
         setTimeout(() => {
@@ -181,9 +186,10 @@ export default function DerivAccountLinking() {
           setConnectionStatus('connecting');
           setApiToken(token);
           setIsConnecting(true);
-        }, 2000 * Math.pow(2, retryCount));
+        }, backoffTime);
       }
     } else {
+      console.error('Max retry attempts reached');
       setConnectionStatus('disconnected');
       handleDisconnect();
     }
@@ -241,21 +247,30 @@ export default function DerivAccountLinking() {
       setIsConnecting(true);
       setConnectionStatus('connecting');
       
+      // Add connection attempt timestamp
+      const connectionStartTime = Date.now();
+      
       const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3');
+      
+      // Add connection state tracking
+      let connectionEstablished = false;
       
       // Reduce timeout to 5 seconds for faster feedback
       const connectionTimeout = setTimeout(() => {
-        if (ws.readyState !== WebSocket.OPEN) {
+        if (!connectionEstablished) {
           console.error('Connection timeout - WebSocket failed to open within 5 seconds');
           ws.close();
           handleConnectionError('Connection timeout - please try again', token);
         }
-      }, 5000); // 5 second timeout
+      }, 5000);
       
       ws.onopen = () => {
         clearTimeout(connectionTimeout);
-        console.log('2. WebSocket connection opened successfully');
+        connectionEstablished = true;
+        const connectionTime = Date.now() - connectionStartTime;
+        console.log(`2. WebSocket connection opened successfully (took ${connectionTime}ms)`);
         console.log('3. Sending authorization request to Deriv...');
+        
         const authMessage = {
           authorize: token,
           passthrough: { userId: user?.uid }
@@ -264,82 +279,92 @@ export default function DerivAccountLinking() {
       };
 
       ws.onmessage = (event) => {
-        const response = JSON.parse(event.data);
-        console.log('4. Received message from Deriv:', response.msg_type);
-        
-        if (response.msg_type === 'authorize') {
-          if (response.error) {
-            console.error('Deriv authorization error:', response.error);
-            handleConnectionError(response.error.message, token);
-          } else {
-            console.log('5. Successfully authorized with Deriv');
-            console.log('6. Starting VPS connection process...');
-            
-            // Start VPS connection in parallel with Deriv setup
-            fetch('/api/vps/connect', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                userId: user?.uid,
-                accountId: response.authorize.loginid,
-                token: token
-              })
-            }).then(async (vpsResponse) => {
-              const vpsResult = await vpsResponse.json();
-              if (!vpsResult.success) {
-                console.error('VPS connection failed:', vpsResult.error);
-                throw new Error(vpsResult.error);
-              }
-              console.log('7. VPS connection established successfully');
+        try {
+          const response = JSON.parse(event.data);
+          console.log('4. Received message from Deriv:', response.msg_type);
+          
+          if (response.msg_type === 'authorize') {
+            if (response.error) {
+              console.error('Deriv authorization error:', response.error);
+              handleConnectionError(response.error.message, token);
+            } else {
+              console.log('5. Successfully authorized with Deriv');
+              console.log('6. Starting VPS connection process...');
               
-              // Update connection status
-              setConnectionStatus('connected');
-              setIsConnected(true);
-              setIsConnecting(false);
-              setShowSuccessScreen(true);
-              toast.success('Successfully connected to Deriv and VPS');
-              
-              // Request trading data in parallel
-              console.log('8. Requesting trading data...');
-              ws.send(JSON.stringify({
-                active_symbols: "brief",
-                product_type: "mt5"
-              }));
+              // Start VPS connection in parallel with Deriv setup
+              fetch('/api/vps/connect', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  userId: user?.uid,
+                  accountId: response.authorize.loginid,
+                  token: token
+                })
+              }).then(async (vpsResponse) => {
+                const vpsResult = await vpsResponse.json();
+                if (!vpsResult.success) {
+                  console.error('VPS connection failed:', vpsResult.error);
+                  throw new Error(vpsResult.error);
+                }
+                console.log('7. VPS connection established successfully');
+                
+                // Update connection status
+                setConnectionStatus('connected');
+                setIsConnected(true);
+                setIsConnecting(false);
+                setShowSuccessScreen(true);
+                toast.success('Successfully connected to Deriv and VPS');
+                
+                // Request trading data in parallel
+                console.log('8. Requesting trading data...');
+                ws.send(JSON.stringify({
+                  active_symbols: "brief",
+                  product_type: "mt5"
+                }));
 
-              ws.send(JSON.stringify({
-                account_status: 1,
-                subscribe: 1
-              }));
-            }).catch((error) => {
-              console.error('VPS connection error:', error);
-              handleConnectionError('Failed to connect to VPS server', token);
-            });
+                ws.send(JSON.stringify({
+                  account_status: 1,
+                  subscribe: 1
+                }));
+              }).catch((error) => {
+                console.error('VPS connection error:', error);
+                handleConnectionError('Failed to connect to VPS server', token);
+              });
+            }
           }
-        }
-        
-        if (response.msg_type === 'active_symbols') {
-          console.log('9. Received trading symbols:', response.active_symbols?.length);
-          handleSymbolsResponse(response.active_symbols as DerivSymbol[]);
-        }
+          
+          if (response.msg_type === 'active_symbols') {
+            console.log('9. Received trading symbols:', response.active_symbols?.length);
+            handleSymbolsResponse(response.active_symbols as DerivSymbol[]);
+          }
 
-        if (response.msg_type === 'account_status') {
-          console.log('10. Received account status:', response.status);
-          updateAccountStatus(response.status as DerivAccountStatus);
+          if (response.msg_type === 'account_status') {
+            console.log('10. Received account status:', response.status);
+            updateAccountStatus(response.status as DerivAccountStatus);
+          }
+        } catch (error) {
+          console.error('Error processing WebSocket message:', error);
+          handleConnectionError('Error processing server response', token);
         }
       };
 
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
-        setIsConnecting(false);
-        handleConnectionError('Connection error occurred with Deriv', token);
+        if (!connectionEstablished) {
+          console.error('Connection failed before establishment');
+          setIsConnecting(false);
+          handleConnectionError('Failed to establish connection to Deriv', token);
+        }
       };
 
-      ws.onclose = () => {
-        console.log('WebSocket connection to Deriv closed');
+      ws.onclose = (event) => {
+        console.log('WebSocket connection to Deriv closed:', event.code, event.reason);
         setIsConnecting(false);
-        handleConnectionClose();
+        if (!connectionEstablished) {
+          handleConnectionClose();
+        }
       };
 
       setWsConnection(ws);
