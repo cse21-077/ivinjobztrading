@@ -33,6 +33,8 @@ const DERIV_MARKETS = [
 // Leverage options
 const LEVERAGE_OPTIONS = ["1:50", "1:100", "1:200", "1:500", "1:1000"]
 
+const DERIV_APP_ID = '69299';
+
 interface DerivConfig {
   apiToken: string;
   server: string;
@@ -331,322 +333,66 @@ export default function DerivAccountLinking() {
     }
   }, [user, activeSymbols]);
 
-  const establishWebSocketConnection = useCallback((token: string) => {
-    if (isConnecting) return null;
-    
-    try {
-      console.log('=== Starting Connection Process ===');
-      console.log('1. Initializing WebSocket connection to Deriv...');
-      setIsConnecting(true);
-      setConnectionStatus('connecting');
-      
-      // Add connection attempt timestamp
-      const connectionStartTime = Date.now();
-      
-      // Get the app_id from the OAuth URL
-      const oauthUrl = getDerivOAuthUrl();
-      const appId = new URL(oauthUrl).searchParams.get('app_id');
-      
-      if (!appId) {
-        throw new Error('App ID not found in OAuth configuration');
-      }
-      
-      // Find the selected server endpoint from DERIV_SERVERS
-      const selectedServer = DERIV_SERVERS.find(s => s.id === server) || DERIV_SERVERS[1]; // Default to SVG-Real if not found
-      
-      // Define the fallback endpoints in case the primary one fails
-      const fallbackEndpoints = [
-        `wss://${selectedServer.endpoint}/websockets/v3`,
-        'wss://ws.binaryws.com/websockets/v3',
-        'wss://frontend.binaryws.com/websockets/v3',
-        'wss://deriv.com/websockets/v3',
-        'wss://api.deriv.com/websockets/v3'
-      ].map(endpoint => `${endpoint}?app_id=${appId}`);
+  const establishWebSocketConnection = useCallback(async (token: string) => {
+    // Define a single endpoint with the known app_id
+    const endpoint = `wss://ws.binaryws.com/websockets/v3?app_id=${DERIV_APP_ID}`;
+    console.log('Attempting connection to:', endpoint);
 
-      let retryCount = 0;
-      const maxRetries = 3;
-      const baseDelay = 1000; // Base delay of 1 second
-
-      const connectWithRetry = async () => {
-        if (retryCount > 0) {
-          const delay = Math.min(baseDelay * Math.pow(2, retryCount - 1), 10000); // Exponential backoff with max 10s
-          console.log(`Retrying WebSocket connection (attempt ${retryCount} of ${maxRetries}) after ${delay}ms...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-
-        // Use the appropriate endpoint based on retry count
-        const endpoint = fallbackEndpoints[Math.min(retryCount, fallbackEndpoints.length - 1)];
-        console.log(`Connecting to Deriv server using endpoint: ${endpoint}`);
-
-        let ws: WebSocket | null = null;
-        try {
-          ws = new WebSocket(endpoint);
-        } catch (error: any) {
-          console.error('Error creating WebSocket connection:', error);
-          handleRetry(`Failed to create WebSocket: ${error.message}`);
-          return null;
-        }
-
-        // Add connection state tracking
-        let connectionEstablished = false;
-        let pingInterval: NodeJS.Timeout;
-        let reconnectTimeout: NodeJS.Timeout;
-
-        // Set a timeout for the connection
-        const connectionTimeout = setTimeout(() => {
-          if (!connectionEstablished && ws) {
-            console.error('Connection timeout - WebSocket failed to open within 10 seconds');
-            ws.close();
-            handleRetry('Connection timeout - please try again');
-          }
-        }, 10000);
-
+    return new Promise((resolve, reject) => {
+      try {
+        const ws = new WebSocket(endpoint);
+        
         ws.onopen = () => {
-          clearTimeout(connectionTimeout);
-          connectionEstablished = true;
-          const connectionTime = Date.now() - connectionStartTime;
-          console.log(`WebSocket connection opened successfully (took ${connectionTime}ms)`);
-
-          // Validate app_id before proceeding
-          if (!appId || isNaN(Number(appId))) {
-            console.error('Invalid app_id:', appId);
-            ws?.close();
-            handleConnectionError('Invalid app_id configuration', token);
-            return;
-          }
-
-          // Set up ping interval to keep connection alive
-          pingInterval = setInterval(() => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              try {
-                ws.send(JSON.stringify({ ping: 1 }));
-              } catch (error) {
-                console.error('Error sending ping:', error);
-                clearInterval(pingInterval);
-                ws.close();
-              }
-            }
-          }, 30000);
-
-          // Set up automatic reconnection if no message received
-          const resetReconnectTimeout = () => {
-            if (reconnectTimeout) clearTimeout(reconnectTimeout);
-            reconnectTimeout = setTimeout(() => {
-              console.log('No message received for 60 seconds, reconnecting...');
-              if (ws) ws.close();
-            }, 60000);
-          };
-          resetReconnectTimeout();
-
-          const authMessage = {
-            authorize: token,
-            passthrough: { userId: user?.uid }
-          };
-
-          try {
-            ws.send(JSON.stringify(authMessage));
-            console.log('Authorization request sent to Deriv');
-          } catch (error) {
-            console.error('Error sending auth message:', error);
-            ws.close();
-            handleConnectionError('Failed to send authorization request', token);
-          }
+          console.log('WebSocket connection established');
+          ws.send(JSON.stringify({ authorize: token }));
         };
 
         ws.onmessage = (event) => {
-          try {
-            const response = JSON.parse(event.data);
-            console.log('Received message from Deriv:', response.msg_type);
-
-            // Reset reconnect timeout on any message
-            if (reconnectTimeout) {
-              clearTimeout(reconnectTimeout);
-              reconnectTimeout = setTimeout(() => {
-                console.log('No message received for 60 seconds, reconnecting...');
-                if (ws) ws.close();
-              }, 60000);
-            }
-
-            // Handle ping response
-            if (response.msg_type === 'ping') {
-              return;
-            }
-
-            if (response.msg_type === 'authorize') {
-              if (response.error) {
-                console.error('Deriv authorization error:', response.error);
-                clearInterval(pingInterval);
-                ws.close();
-                handleRetry(response.error.message);
-              } else {
-                console.log('Successfully authorized with Deriv');
-
-                // Start VPS connection in parallel with Deriv setup
-                (async () => {
-                  try {
-                    // Get EA configuration from derivConfigs
-                    const derivConfigRef = doc(db, "derivConfigs", user?.uid || '');
-                    const derivConfigSnap = await getDoc(derivConfigRef);
-
-                    if (!derivConfigSnap.exists()) {
-                      throw new Error('EA configuration not found. Please configure your EA settings first.');
-                    }
-
-                    const derivConfig = derivConfigSnap.data();
-
-                    if (!derivConfig.eaConfig) {
-                      throw new Error('EA configuration not found. Please configure your EA settings first.');
-                    }
-
-                    const vpsResponse = await fetch('/api/vps/connect', {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                      },
-                      body: JSON.stringify({
-                        userId: user?.uid,
-                        accountId: response.authorize.loginid,
-                        derivToken: token,
-                        eaConfig: derivConfig.eaConfig
-                      })
-                    });
-
-                    if (!vpsResponse.ok) {
-                      const errorData = await vpsResponse.json();
-                      throw new Error(errorData.error || `VPS connection failed with status: ${vpsResponse.status}`);
-                    }
-
-                    const vpsResult = await vpsResponse.json();
-                    if (!vpsResult.success) {
-                      console.error('VPS connection failed:', vpsResult.error);
-                      throw new Error(vpsResult.error);
-                    }
-                    console.log('VPS connection established successfully');
-
-                    // Update connection status
-                    setConnectionStatus('connected');
-                    setIsConnected(true);
-                    setIsConnecting(false);
-                    setShowSuccessScreen(true);
-                    toast.success('Successfully connected to Deriv and VPS');
-
-                    // Store the WebSocket instance
-                    setWsConnection(ws);
-
-                    // Request trading data in parallel
-                    console.log('Requesting trading data...');
-                    ws.send(JSON.stringify({
-                      active_symbols: "brief",
-                      product_type: "mt5"
-                    }));
-
-                    ws.send(JSON.stringify({
-                      account_status: 1,
-                      subscribe: 1
-                    }));
-                  } catch (error: any) {
-                    console.error('VPS connection error:', error);
-                    // Don't retry on 404 errors as they indicate a configuration issue
-                    if (error.message?.includes('404')) {
-                      handleConnectionError('VPS service is not available. Please contact support.', token);
-                    } else {
-                      handleConnectionError('Failed to connect to VPS server: ' + error.message, token);
-                    }
-                  }
-                })();
-              }
-            }
-
-            if (response.msg_type === 'active_symbols') {
-              console.log('Received trading symbols:', response.active_symbols?.length);
-              handleSymbolsResponse(response.active_symbols as DerivSymbol[]);
-            }
-
-            if (response.msg_type === 'account_status') {
-              console.log('Received account status:', response.status);
-              updateAccountStatus(response.status as DerivAccountStatus);
-            }
-          } catch (error: any) {
-            console.error('Error processing WebSocket message:', error);
-            handleConnectionError('Error processing server response: ' + error.message, token);
+          const response = JSON.parse(event.data);
+          if (response.error) {
+            console.error('WebSocket error:', response.error);
+            reject(response.error);
+            return;
+          }
+          if (response.msg_type === 'authorize') {
+            console.log('Authorization successful');
+            resolve(ws);
           }
         };
 
         ws.onerror = (error) => {
           console.error('WebSocket error:', error);
-          clearTimeout(connectionTimeout);
-          if (pingInterval) clearInterval(pingInterval);
-          if (reconnectTimeout) clearTimeout(reconnectTimeout);
-
-          if (!connectionEstablished) {
-            console.log(`WebSocket error details - URL: ${endpoint}, readyState: ${ws?.readyState}`);
-            handleRetry('WebSocket connection error. Please check your internet connection and firewall settings.');
-          }
+          reject(error);
         };
 
-        ws.onclose = (event) => {
-          console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`);
-          clearTimeout(connectionTimeout);
-          if (pingInterval) clearInterval(pingInterval);
-          if (reconnectTimeout) clearTimeout(reconnectTimeout);
-
-          if (!connectionEstablished) {
-            retryCount++;
-            if (retryCount <= maxRetries) {
-              console.log(`Connection attempt ${retryCount} failed, trying next endpoint...`);
-              connectWithRetry();
-            } else {
-              handleConnectionError('All WebSocket connection attempts failed. Please try again later.', token);
-            }
-          } else if (event.code === 1006) {
-            // Abnormal closure - attempt to reconnect
-            console.log('Abnormal connection closure, attempting to reconnect...');
-            retryCount = 0;
-            connectWithRetry();
-          }
+        ws.onclose = () => {
+          console.log('WebSocket connection closed');
+          reject(new Error('WebSocket connection closed'));
         };
 
-        return ws;
-      };
+      } catch (error) {
+        console.error('Error establishing WebSocket connection:', error);
+        reject(error);
+      }
+    });
+  }, []);
 
-      const handleRetry = (errorMessage: string) => {
-        retryCount++;
-        console.error(`Connection attempt failed: ${errorMessage}`);
-
-        if (retryCount <= maxRetries) {
-          // Exponential backoff: increase delay with each retry
-          const delay = Math.min(baseDelay * Math.pow(2, retryCount - 1), 10000); // Cap at 10 seconds
-          console.log(`Will retry in ${delay}ms... (attempt ${retryCount} of ${maxRetries})`);
-
-          // Use toast.dismiss to clear any existing retry notifications before showing a new one
-          toast.dismiss('connection-retry');
-          toast.info(`Connection failed. Retrying in ${Math.round(delay / 1000)} seconds...`, {
-            id: 'connection-retry' // In Sonner, it's 'id' not 'toastId'
-          });
-
-          setTimeout(() => {
-            connectWithRetry();
-          }, delay);
-        } else {
-          console.error(`Failed after ${maxRetries} attempts. Last error: ${errorMessage}`);
-          setIsConnecting(false);
-          setConnectionStatus('disconnected');
-          handleConnectionError(`Connection failed after ${maxRetries} attempts: ${errorMessage}`, token);
-        }
-      };
-
-      // Start the connection process
-      const ws = connectWithRetry();
-      return ws;
-    } catch (error: any) {
-      console.error('Connection establishment error:', error);
+  const handleConnection = useCallback(async () => {
+    try {
+      setIsConnecting(true);
+      const ws = await establishWebSocketConnection(apiToken);
+      setWsConnection(ws as WebSocket);
+      setIsConnected(true);
+      setConnectionStatus('connected');
+      toast.success('Successfully connected to Deriv');
+    } catch (error: unknown) {
+      console.error('Connection error:', error);
       setIsConnecting(false);
       setConnectionStatus('disconnected');
-      handleConnectionError('Failed to establish connection to Deriv: ' + error.message, token);
-      return null;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      toast.error(`Failed to connect: ${errorMessage}`);
     }
-  }, [user, handleConnectionClose, handleSymbolsResponse, updateAccountStatus, handleConnectionError, isConnecting, server, getDerivOAuthUrl]);
+  }, [apiToken, establishWebSocketConnection]);
 
   useEffect(() => {
     let mounted = true;
@@ -743,7 +489,7 @@ export default function DerivAccountLinking() {
       }, { merge: true });
       
       // Establish connection with selected account
-      establishWebSocketConnection(selectedAccount.token);
+      handleConnection();
       setApiToken(selectedAccount.token);
       setAccountId(selectedAccount.accountId);
     } catch (error) {
@@ -752,7 +498,7 @@ export default function DerivAccountLinking() {
       setIsConnecting(false);
       setIsAccountConfirmed(false);
     }
-  }, [user, selectedAccount, establishWebSocketConnection]);
+  }, [user, selectedAccount, handleConnection]);
 
   const handleChangeAccount = useCallback(() => {
     setShowAccountSelect(true);
