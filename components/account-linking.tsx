@@ -149,27 +149,31 @@ export default function DerivAccountLinking() {
     }
   }, [user, wsConnection]);
 
-  const handleConnectionError = useCallback((message: string) => {
+  const handleConnectionError = useCallback((message: string, token?: string) => {
     toast.error(message);
     if (retryCount < MAX_RETRIES) {
       setRetryCount(prev => prev + 1);
-      setTimeout(() => {
-        toast.info('Retrying connection...');
-        establishWebSocketConnection(apiToken);
-      }, 2000 * Math.pow(2, retryCount));
+      if (token) {
+        setTimeout(() => {
+          toast.info('Retrying connection...');
+          setConnectionStatus('connecting');
+          setApiToken(token);
+        }, 2000 * Math.pow(2, retryCount));
+      }
     } else {
       setConnectionStatus('disconnected');
       handleDisconnect();
     }
-  }, [retryCount, MAX_RETRIES, apiToken, handleDisconnect]);
+  }, [retryCount, MAX_RETRIES, handleDisconnect]);
 
   const handleConnectionClose = useCallback(() => {
     setIsConnected(false);
     setConnectionStatus('disconnected');
-    if (retryCount < MAX_RETRIES) {
-      handleConnectionError('Connection closed unexpectedly');
+    if (retryCount < MAX_RETRIES && apiToken) {
+      toast.error('Connection closed unexpectedly');
+      handleConnectionError('Connection closed unexpectedly', apiToken);
     }
-  }, [retryCount, MAX_RETRIES, handleConnectionError]);
+  }, [retryCount, MAX_RETRIES, handleConnectionError, apiToken]);
 
   const subscribeToSymbol = useCallback((symbol: string) => {
     if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
@@ -208,7 +212,6 @@ export default function DerivAccountLinking() {
   const establishWebSocketConnection = useCallback((token: string) => {
     try {
       console.log('Starting WebSocket connection to Deriv...');
-      setConnectionStatus('connecting');
       const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3');
       
       ws.onopen = () => {
@@ -228,7 +231,7 @@ export default function DerivAccountLinking() {
         if (response.msg_type === 'authorize') {
           if (response.error) {
             console.error('Deriv authorization error:', response.error);
-            handleConnectionError(response.error.message);
+            handleConnectionError(response.error.message, token);
           } else {
             console.log('Successfully authorized with Deriv');
             setConnectionStatus('connected');
@@ -262,7 +265,7 @@ export default function DerivAccountLinking() {
 
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
-        handleConnectionError('Connection error occurred with Deriv');
+        handleConnectionError('Connection error occurred with Deriv', token);
       };
 
       ws.onclose = () => {
@@ -274,10 +277,10 @@ export default function DerivAccountLinking() {
       return ws;
     } catch (error) {
       console.error('Connection establishment error:', error);
-      handleConnectionError('Failed to establish connection to Deriv');
+      handleConnectionError('Failed to establish connection to Deriv', token);
       return null;
     }
-  }, [user, handleConnectionError, handleConnectionClose, handleSymbolsResponse, updateAccountStatus]);
+  }, [user, handleConnectionClose, handleSymbolsResponse, updateAccountStatus, handleConnectionError]);
 
   useEffect(() => {
     let mounted = true;
@@ -297,7 +300,7 @@ export default function DerivAccountLinking() {
               // Use the first account's token to establish WebSocket connection
               const token = accounts[0].token;
               console.log('Found token, establishing WebSocket connection...');
-              if (token && !wsConnection) {
+              if (token && !wsConnection && mounted) {
                 establishWebSocketConnection(token);
                 setApiToken(token);
                 setAccountId(accounts[0].accountId);
@@ -336,6 +339,12 @@ export default function DerivAccountLinking() {
       }
     }
   }, [user, wsConnection, establishWebSocketConnection]);
+
+  useEffect(() => {
+    if (connectionStatus === 'connecting' && apiToken && !wsConnection) {
+      establishWebSocketConnection(apiToken);
+    }
+  }, [connectionStatus, apiToken, wsConnection, establishWebSocketConnection]);
 
   const handleMarketToggle = (market: string) => {
     setMarkets(prev => 

@@ -28,6 +28,14 @@ function OAuthRedirectContent() {
     const handleRedirect = async () => {
       console.log('Starting OAuth redirect handling...');
       console.log('Current URL:', window.location.href);
+      
+      if (!searchParams) {
+        console.error('No search params found');
+        toast.error("Invalid redirect response");
+        router.push("/dashboard");
+        return;
+      }
+      
       console.log('Search params:', Object.fromEntries(searchParams.entries()));
       
       if (!user) {
