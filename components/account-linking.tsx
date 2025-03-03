@@ -101,10 +101,12 @@ export default function DerivAccountLinking() {
   const [activeSymbols, setActiveSymbols] = useState<string[]>([])
   const [retryCount, setRetryCount] = useState(0)
   const MAX_RETRIES = 3
+  const [isConnecting, setIsConnecting] = useState(false)
 
   const handleDisconnect = useCallback(async () => {
     try {
       setIsLoading(true);
+      setIsConnecting(false);
       
       if (wsConnection) {
         wsConnection.close();
@@ -151,6 +153,7 @@ export default function DerivAccountLinking() {
 
   const handleConnectionError = useCallback((message: string, token?: string) => {
     toast.error(message);
+    setIsConnecting(false);
     if (retryCount < MAX_RETRIES) {
       setRetryCount(prev => prev + 1);
       if (token) {
@@ -158,6 +161,7 @@ export default function DerivAccountLinking() {
           toast.info('Retrying connection...');
           setConnectionStatus('connecting');
           setApiToken(token);
+          setIsConnecting(true);
         }, 2000 * Math.pow(2, retryCount));
       }
     } else {
@@ -210,6 +214,8 @@ export default function DerivAccountLinking() {
   }, [user, activeSymbols]);
 
   const establishWebSocketConnection = useCallback((token: string) => {
+    if (isConnecting) return null;
+    
     try {
       console.log('Starting WebSocket connection to Deriv...');
       const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3');
@@ -236,6 +242,7 @@ export default function DerivAccountLinking() {
             console.log('Successfully authorized with Deriv');
             setConnectionStatus('connected');
             setIsConnected(true);
+            setIsConnecting(false);
             toast.success('Successfully connected to Deriv');
             
             console.log('Requesting available trading symbols...');
@@ -265,11 +272,13 @@ export default function DerivAccountLinking() {
 
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
+        setIsConnecting(false);
         handleConnectionError('Connection error occurred with Deriv', token);
       };
 
       ws.onclose = () => {
         console.log('WebSocket connection to Deriv closed');
+        setIsConnecting(false);
         handleConnectionClose();
       };
 
@@ -277,16 +286,18 @@ export default function DerivAccountLinking() {
       return ws;
     } catch (error) {
       console.error('Connection establishment error:', error);
+      setIsConnecting(false);
       handleConnectionError('Failed to establish connection to Deriv', token);
       return null;
     }
-  }, [user, handleConnectionClose, handleSymbolsResponse, updateAccountStatus, handleConnectionError]);
+  }, [user, handleConnectionClose, handleSymbolsResponse, updateAccountStatus, handleConnectionError, isConnecting]);
 
   useEffect(() => {
     let mounted = true;
+    let connectionAttempted = false;
 
     const fetchUserConfig = async () => {
-      if (user && mounted) {
+      if (user && mounted && !connectionAttempted) {
         try {
           console.log('Fetching user configuration...');
           // First check for OAuth tokens
@@ -296,15 +307,15 @@ export default function DerivAccountLinking() {
           if (accountsSnap.exists()) {
             const accounts = accountsSnap.data().accounts;
             console.log('Found Deriv accounts:', accounts);
-            if (accounts && accounts.length > 0) {
+            if (accounts && accounts.length > 0 && !wsConnection && !isConnecting) {
               // Use the first account's token to establish WebSocket connection
               const token = accounts[0].token;
               console.log('Found token, establishing WebSocket connection...');
-              if (token && !wsConnection && mounted) {
-                establishWebSocketConnection(token);
-                setApiToken(token);
-                setAccountId(accounts[0].accountId);
-              }
+              setIsConnecting(true);
+              connectionAttempted = true;
+              establishWebSocketConnection(token);
+              setApiToken(token);
+              setAccountId(accounts[0].accountId);
             }
           } else {
             console.log('No Deriv accounts found in Firestore');
@@ -338,7 +349,7 @@ export default function DerivAccountLinking() {
         wsConnection.close();
       }
     }
-  }, [user, wsConnection, establishWebSocketConnection]);
+  }, [user, wsConnection, establishWebSocketConnection, isConnecting]);
 
   useEffect(() => {
     if (connectionStatus === 'connecting' && apiToken && !wsConnection) {
