@@ -40,6 +40,7 @@ interface DerivConfig {
   leverage: string;
   isConnected: boolean;
   lastConnected?: Date;
+  selectedSymbols: string[];
 }
 
 interface MT4Config {
@@ -65,6 +66,7 @@ export default function DerivAccountLinking() {
   const [leverage, setLeverage] = useState("")
   const [isConnected, setIsConnected] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>([])
   const [mt4Server, setMt4Server] = useState("")
   const [mt4Login, setMt4Login] = useState("")
   const [mt4Password, setMt4Password] = useState("")
@@ -86,10 +88,11 @@ export default function DerivAccountLinking() {
             setMarkets(data.markets || [])
             setLeverage(data.leverage || "")
             setIsConnected(data.isConnected || false)
+            setSelectedSymbols(data.selectedSymbols || [])
           }
         } catch (error) {
           console.error("Error fetching config:", error)
-          toast.error("Error retrieving configuration: Could not load your saved settings") // Using Sonner toast
+          toast.error("Error retrieving configuration")
         }
       }
     }
@@ -146,7 +149,8 @@ export default function DerivAccountLinking() {
           markets,
           leverage,
           isConnected: true,
-          lastConnected: new Date()
+          lastConnected: new Date(),
+          selectedSymbols: selectedSymbols
         }
         
         await setDoc(doc(db, "derivConfigs", user.uid), configData)
@@ -219,6 +223,49 @@ export default function DerivAccountLinking() {
     window.location.href = oauthUrl;
   };
 
+  const handleDisconnect = async () => {
+    try {
+      setIsLoading(true);
+      
+      // Disconnect from AWS trading server
+      const response = await fetch('/api/mt5/disconnect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId: user?.uid })
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        // Clear Firestore config
+        if (user) {
+          await setDoc(doc(db, "derivConfigs", user.uid), {
+            isConnected: false,
+            lastDisconnected: new Date()
+          }, { merge: true });
+          
+          setIsConnected(false);
+          setApiToken("");
+          setServer("");
+          setAccountId("");
+          setMarkets([]);
+          setLeverage("");
+          setSelectedSymbols([]);
+          toast.success("Successfully disconnected your trading account");
+        }
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      console.error("Error disconnecting:", error);
+      toast.error("Failed to disconnect your account");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <Card className="bg-gray-800 text-gray-200">
       <CardHeader className="px-4 sm:px-6 text-gray-200">
@@ -230,18 +277,64 @@ export default function DerivAccountLinking() {
           <AlertCircle className="h-4 w-4 text-amber-500" />
           <AlertTitle>Important</AlertTitle>
           <AlertDescription>
-            Connect your Deriv account securely using OAuth. This is the recommended and most secure way to connect your account.
+            {isConnected 
+              ? "Your account is connected and ready for trading. You can disconnect at any time."
+              : "Connect your Deriv account securely using OAuth. This is the recommended and most secure way to connect your account."}
           </AlertDescription>
         </Alert>
         
         <div className="space-y-4">
-          <Button 
-            onClick={handleDerivConnect}
-            className="w-full"
-            disabled={isLoading}
-          >
-            {isLoading ? "Connecting..." : "Connect Deriv Account"}
-          </Button>
+          {isConnected ? (
+            <>
+              <div className="rounded-lg bg-gray-700 p-4 mb-4">
+                <h3 className="text-lg font-semibold mb-2">Connected Account Details</h3>
+                <p className="text-sm text-gray-300">Server: {server}</p>
+                <p className="text-sm text-gray-300">Account ID: {accountId}</p>
+                <p className="text-sm text-gray-300">Markets: {markets.join(", ")}</p>
+                <p className="text-sm text-gray-300">Leverage: {leverage}</p>
+              </div>
+              
+              <div className="rounded-lg bg-gray-700 p-4 mb-4">
+                <h3 className="text-lg font-semibold mb-2">Trading Symbols</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {DERIV_MARKETS.map((market) => (
+                    <div key={market.value} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id={market.value}
+                        checked={selectedSymbols.includes(market.value)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedSymbols([...selectedSymbols, market.value]);
+                          } else {
+                            setSelectedSymbols(selectedSymbols.filter(s => s !== market.value));
+                          }
+                        }}
+                        className="rounded border-gray-600"
+                      />
+                      <label htmlFor={market.value}>{market.label}</label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              <Button 
+                onClick={handleDisconnect}
+                className="w-full bg-red-600 hover:bg-red-700"
+                disabled={isLoading}
+              >
+                {isLoading ? "Disconnecting..." : "Disconnect Account"}
+              </Button>
+            </>
+          ) : (
+            <Button 
+              onClick={handleDerivConnect}
+              className="w-full"
+              disabled={isLoading}
+            >
+              {isLoading ? "Connecting..." : "Connect Deriv Account"}
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
