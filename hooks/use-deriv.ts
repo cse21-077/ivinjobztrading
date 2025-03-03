@@ -1,8 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useAuthState } from 'react-firebase-hooks/auth'
 import { auth } from '@/lib/firebase'
-import { doc, getDoc, DocumentData } from 'firebase/firestore'
-import { db } from '@/lib/firebase'
 
 interface DerivAccountDetails {
   token: string
@@ -33,87 +31,93 @@ interface DerivAccount {
   isConnected?: boolean
 }
 
-interface DerivAccountData {
-  accounts: DerivAccountDetails[]
-  selectedAccountId?: string
-  eaConfig?: EAConfig
-}
-
 export function useDerivAccount() {
   const [user] = useAuthState(auth)
   const [activeAccount, setActiveAccount] = useState<DerivAccount | null>(null)
   const [availableAccounts, setAvailableAccounts] = useState<DerivAccountDetails[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
   const [isConnected, setIsConnected] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [ws, setWs] = useState<WebSocket | null>(null)
 
-  const validateEAConfig = (data: DocumentData): EAConfig | undefined => {
-    if (!data) return undefined
-
-    // Check if all required fields exist and are of correct type
-    const config: Partial<EAConfig> = {}
-
-    if (typeof data.server === 'string') config.server = data.server
-    if (typeof data.eaName === 'string') config.eaName = data.eaName
-    if (Array.isArray(data.pairs)) config.pairs = data.pairs.filter((pair: any) => typeof pair === 'string')
-    if (typeof data.lotSize === 'number') config.lotSize = data.lotSize
-    if (typeof data.mt5Login === 'string') config.mt5Login = data.mt5Login
-    if (typeof data.mt5Password === 'string') config.mt5Password = data.mt5Password
-
-    // Only return if we have the minimum required fields
-    if (config.server && config.eaName && config.pairs && config.lotSize) {
-      return config as EAConfig
-    }
-    
-    console.warn('Invalid EA configuration format:', data)
-    return undefined
-  }
-
-  const getDerivAccounts = async (): Promise<DerivAccountData> => {
+  const loadAccounts = async (token: string) => {
     try {
-      const derivDoc = doc(db, 'derivAccounts', user?.uid || '')
-      const derivSnapshot = await getDoc(derivDoc)
+      setIsLoading(true)
+      setError(null)
+
+      // Connect to Deriv API to get account details
+      const ws = new WebSocket('wss://ws.derivws.com/websockets/v3?app_id=69299')
+      setWs(ws)
       
-      if (!derivSnapshot.exists()) {
-        throw new Error('No Deriv accounts found')
+      ws.onopen = () => {
+        console.log("WebSocket connection opened")
+        ws.send(JSON.stringify({ 
+          authorize: token,
+          req_id: 1
+        }))
       }
 
-      const data = derivSnapshot.data()
-      
-      if (!Array.isArray(data.accounts) || data.accounts.length === 0) {
-        console.error('Invalid Deriv account structure:', data)
-        throw new Error('No Deriv accounts available')
+      ws.onmessage = (msg) => {
+        try {
+          const response = JSON.parse(msg.data)
+          console.log("Received message:", response.msg_type, response)
+
+          if (response.error) {
+            console.error("Deriv API error:", response.error)
+            setError(response.error.message || 'Deriv API error occurred')
+            setIsLoading(false)
+            return
+          }
+
+          if (response.msg_type === 'authorize' && response.authorize) {
+            const accounts = response.authorize.account_list.map((acc: any) => ({
+              accountId: acc.account_id,
+              token: acc.token,
+              isActive: true,
+              type: acc.account_type as 'financial' | 'synthetic' | 'standard',
+              server: acc.server || 'DerivDemo'
+            }))
+
+            setAvailableAccounts(accounts)
+            setIsLoading(false)
+          }
+        } catch (error) {
+          console.error("Error processing WebSocket message:", error)
+          setError('Error processing server response')
+          setIsLoading(false)
+        }
       }
 
-      // Check for EA configuration
-      const eaConfigDoc = doc(db, 'eaConfigs', user?.uid || '')
-      const eaConfigSnapshot = await getDoc(eaConfigDoc)
-      const eaConfig = eaConfigSnapshot.exists() 
-        ? validateEAConfig(eaConfigSnapshot.data())
-        : undefined
-
-      return {
-        accounts: data.accounts,
-        selectedAccountId: data.selectedAccountId,
-        eaConfig
+      ws.onclose = (event) => {
+        console.log("WebSocket connection closed", event.code, event.reason)
+        setIsLoading(false)
       }
-    } catch (err) {
-      console.error('Error fetching Deriv accounts:', err)
-      throw err
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error)
+        setError('Connection error occurred')
+        setIsLoading(false)
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to load Deriv accounts')
+      setIsLoading(false)
     }
   }
 
   const connectToAccount = async (accountId: string) => {
     try {
-      const accountData = await getDerivAccounts()
-      const account = accountData.accounts.find(acc => acc.accountId === accountId)
+      setIsLoading(true)
+      setError(null)
+
+      // Find the account in available accounts
+      const account = availableAccounts.find(acc => acc.accountId === accountId)
       
       if (!account) {
         throw new Error('Selected account not found')
       }
 
+      // Create new WebSocket connection
       const newSocket = new WebSocket('wss://ws.derivws.com/websockets/v3?app_id=69299')
       setWs(newSocket)
 
@@ -162,7 +166,6 @@ export function useDerivAccount() {
               type: account.type,
               server: account.server || status.mt5_login_list?.[0]?.server || 'DerivDemo',
               isActive: true,
-              eaConfig: accountData.eaConfig,
               isConnected: true
             })
             
@@ -191,38 +194,6 @@ export function useDerivAccount() {
     }
   }
 
-  useEffect(() => {
-    if (!user) {
-      setIsLoading(false)
-      return
-    }
-
-    const loadAccounts = async () => {
-      try {
-        const data = await getDerivAccounts()
-        setAvailableAccounts(data.accounts)
-        
-        if (data.selectedAccountId) {
-          setSelectedAccountId(data.selectedAccountId)
-          await connectToAccount(data.selectedAccountId)
-        }
-        
-        setIsLoading(false)
-      } catch (err: any) {
-        setError(err.message || 'Failed to load Deriv accounts')
-        setIsLoading(false)
-      }
-    }
-
-    loadAccounts()
-
-    return () => {
-      if (ws) {
-        ws.close(1000, 'Component unmounted')
-      }
-    }
-  }, [user])
-
   return {
     activeAccount,
     availableAccounts,
@@ -230,6 +201,7 @@ export function useDerivAccount() {
     isConnected,
     isLoading,
     error,
-    connectToAccount
+    connectToAccount,
+    loadAccounts
   }
 }

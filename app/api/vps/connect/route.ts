@@ -68,6 +68,24 @@ export async function POST(request: Request) {
       );
     }
 
+    // Validate token format
+    if (!/^[a-zA-Z0-9]{32,128}$/.test(derivToken)) {
+      console.error('Invalid Deriv token format');
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Invalid token format',
+          details: 'The Deriv token provided appears to be in an incorrect format'
+        },
+        { status: 400 }
+      );
+    }
+
+    // Validate account ID format (typically CR12345 or similar)
+    if (!/^[A-Z]{2,4}[0-9]{5,10}$/.test(accountId)) {
+      console.warn('Unusual account ID format:', accountId.substring(0, 2) + '***');
+    }
+
     console.log('EA Configuration:', {
       server: eaConfig.server,
       login: eaConfig.login,
@@ -98,6 +116,28 @@ export async function POST(request: Request) {
         },
         { status: 400 }
       );
+    }
+
+    // Validate server is an SVG server
+    if (!eaConfig.server.toLowerCase().includes('svg')) {
+      console.warn('Server may not be an SVG server:', eaConfig.server);
+    }
+
+    // Validate pairs are appropriate for the account type
+    const accountType = accountId.substring(0, 2).toLowerCase();
+    const synthIndicePairs = ['V10', 'V25', 'V50', 'V75', 'V100', 'BOOM', 'CRASH'];
+    const forexPairs = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD'];
+    
+    for (const pair of eaConfig.pairs) {
+      // Check if synthetic indices account is trying to trade forex pairs
+      if (accountType === 'vr' && forexPairs.some(fp => pair.includes(fp))) {
+        console.warn('Account type may not support this pair:', { accountType, pair });
+      }
+      
+      // Check if forex account is trying to trade synthetic indices
+      if (accountType === 'cr' && synthIndicePairs.some(sp => pair.includes(sp))) {
+        console.warn('Account type may not support this pair:', { accountType, pair });
+      }
     }
 
     // Initialize VPS service

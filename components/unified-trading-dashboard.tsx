@@ -19,12 +19,14 @@ interface TradingPair {
   display_name: string;
 }
 
-interface DerivAccount {
-  accountId: string;
+interface DerivAccountDetails {
   token: string;
-  currency: string;
-  type?: string;
+  accountId: string;
+  isActive: boolean;
+  type: 'financial' | 'synthetic' | 'standard';
   server?: string;
+  mt5Login?: string;
+  mt5Password?: string;
 }
 
 const TRADING_PAIRS: Record<string, TradingPair[]> = {
@@ -69,13 +71,13 @@ export default function UnifiedTradingDashboard() {
   const [tradingActive, setTradingActive] = useState(false)
 
   // Update available markets based on account type
-  const handleAccountSelect = useCallback(async (account: DerivAccount) => {
+  const handleAccountSelect = useCallback(async (account: DerivAccountDetails) => {
     try {
       await connectToAccount(account.accountId);
       setConnectionStatus('disconnected');
       setTradingActive(false);
 
-      const accountType = account.type || 'standard';
+      const accountType = account.type;
       
       switch(accountType) {
         case 'financial':
@@ -112,7 +114,7 @@ export default function UnifiedTradingDashboard() {
         server: activeAccount.server || 'demo',
         eaName: EA_NAME,
         pairs: [selectedPair],
-        lotSize,
+        lotSize: parseFloat(lotSize),
         market: selectedMarket
       };
 
@@ -124,7 +126,7 @@ export default function UnifiedTradingDashboard() {
         },
         body: JSON.stringify({
           userId: user.uid,
-          accountId: activeAccount.accountId,
+          accountId: activeAccount.id,
           derivToken: activeAccount.token,
           eaConfig
         })
@@ -243,9 +245,9 @@ export default function UnifiedTradingDashboard() {
                   } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   <div className="font-medium">Account ID: {account.accountId}</div>
-                  <div className="text-sm text-gray-300">Currency: {account.currency}</div>
-                  {account.type && (
-                    <div className="text-sm text-gray-300">Type: {account.type}</div>
+                  <div className="text-sm text-gray-300">Type: {account.type}</div>
+                  {account.server && (
+                    <div className="text-sm text-gray-300">Server: {account.server}</div>
                   )}
                   {selectedAccountId === account.accountId && isConnected && (
                     <div className="text-sm text-green-400 mt-1">

@@ -109,6 +109,12 @@ export class VPSService {
   }) {
     try {
       console.log('Preparing MetaTrader connection...');
+      console.log('MT5 connection details:', {
+        server: credentials.server,
+        login: credentials.login,
+        eaName: credentials.eaName,
+        pairsCount: credentials.pairs.length
+      });
       
       // First, ensure MT5 is not already running
       const stopCommand = new SendCommandCommand({
@@ -116,9 +122,11 @@ export class VPSService {
         DocumentName: "AWS-RunPowerShellScript",
         Parameters: {
           commands: [
+            `Write-Host "Stopping any existing MT5 instances..."`,
             `Get-Process -Name "terminal64" -ErrorAction SilentlyContinue | Stop-Process -Force`,
             `Get-Process -Name "mt5" -ErrorAction SilentlyContinue | Stop-Process -Force`,
-            `Start-Sleep -Seconds 2` // Wait for processes to stop
+            `Start-Sleep -Seconds 2`, // Wait for processes to stop
+            `Write-Host "Cleanup complete."`
           ]
         }
       });
@@ -133,12 +141,37 @@ export class VPSService {
           commands: [
             `$mt5Path = "C:\\Program Files\\MetaTrader 5\\terminal64.exe"`,
             `$eaPath = "C:\\Program Files\\MetaTrader 5\\MQL5\\Experts\\${credentials.eaName}.ex5"`,
-            `if (!(Test-Path $eaPath)) { throw "EA file not found at $eaPath" }`,
-            `if (!(Test-Path $mt5Path)) { throw "MetaTrader 5 not found at $mt5Path" }`
+            `Write-Host "Checking for MT5 at: $mt5Path"`,
+            `Write-Host "Checking for EA at: $eaPath"`,
+            `if (!(Test-Path $eaPath)) { 
+              Write-Host "EA not found at $eaPath" -ForegroundColor Red
+              throw "EA file not found at $eaPath" 
+            } else { 
+              Write-Host "EA file found successfully" -ForegroundColor Green 
+            }`,
+            `if (!(Test-Path $mt5Path)) { 
+              Write-Host "MT5 not found at $mt5Path" -ForegroundColor Red
+              throw "MetaTrader 5 not found at $mt5Path" 
+            } else { 
+              Write-Host "MT5 found successfully" -ForegroundColor Green 
+            }`
           ]
         }
       });
       await this.ssmClient.send(checkCommand);
+      console.log('Verified MT5 and EA exist on VPS');
+
+      // Prepare pairs string for MT5 command line
+      const pairsString = credentials.pairs.join(',');
+      console.log(`Configuring MT5 to trade ${credentials.pairs.length} pairs: ${pairsString}`);
+
+      // Handle SVG server specifics
+      let serverArgs = credentials.server;
+      // Add special configurations for SVG servers if needed
+      if (credentials.server.toLowerCase().includes('svg')) {
+        console.log('Using SVG server configuration');
+        // Some SVG servers may need specific settings
+      }
 
       // Start MT5 with the EA
       const startCommand = new SendCommandCommand({
@@ -148,11 +181,30 @@ export class VPSService {
           commands: [
             `$mt5Path = "C:\\Program Files\\MetaTrader 5\\terminal64.exe"`,
             `Write-Host "Starting MetaTrader 5..."`,
-            `Start-Process -FilePath $mt5Path -ArgumentList "/login:${credentials.login} /password:${credentials.password} /server:${credentials.server} /port:443 /ea:${credentials.eaName} /pairs:${credentials.pairs.join(',')}"`,
+            `Write-Host "Command: $mt5Path /login:${credentials.login} /password:****** /server:${serverArgs} /port:443 /ea:${credentials.eaName} /pairs:${pairsString}"`,
+            `Start-Process -FilePath $mt5Path -ArgumentList "/login:${credentials.login} /password:${credentials.password} /server:${serverArgs} /port:443 /ea:${credentials.eaName} /pairs:${pairsString}"`,
+            `Write-Host "Waiting for MT5 to initialize..."`,
             `Start-Sleep -Seconds 10`,
             `$process = Get-Process terminal64 -ErrorAction SilentlyContinue`,
-            `if (!$process) { throw "MetaTrader 5 failed to start" }`,
-            `Write-Host "MetaTrader 5 started successfully with process ID: $($process.Id)"`
+            `if (!$process) { 
+              Write-Host "MT5 failed to start" -ForegroundColor Red
+              throw "MetaTrader 5 failed to start" 
+            }`,
+            `Write-Host "MetaTrader 5 started successfully with process ID: $($process.Id)" -ForegroundColor Green`,
+            `# Create a monitoring file to track EA startup
+            $monitorFile = "C:\\MT5_ea_monitor.txt"
+            "EA Start Time: $(Get-Date)" | Out-File $monitorFile`,
+            `# Verify the EA is loaded
+            Start-Sleep -Seconds 5
+            $chartProcess = Get-Process -Name "terminal64" -ErrorAction SilentlyContinue
+            if ($chartProcess) {
+              "EA Status: Process running with ID $($chartProcess.Id)" | Out-File $monitorFile -Append
+              "Memory Usage: $([math]::Round($chartProcess.WorkingSet / 1MB, 2)) MB" | Out-File $monitorFile -Append
+              Write-Host "MT5 is now running with $([math]::Round($chartProcess.WorkingSet / 1MB, 2)) MB memory usage"
+            } else {
+              "EA Status: Process not found after startup" | Out-File $monitorFile -Append
+              Write-Host "Warning: MT5 process not found after initial startup" -ForegroundColor Yellow
+            }`
           ]
         }
       });

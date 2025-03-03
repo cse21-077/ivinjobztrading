@@ -17,10 +17,10 @@ import { getDerivOAuthUrl } from "@/lib/deriv-oauth";
 
 // Deriv server options
 const DERIV_SERVERS = [
-  { id: "svg-demo", name: "SVG-Demo", description: "SVG Virtual Trading" },
-  { id: "svg-real", name: "SVG-Real", description: "SVG Real Money Trading" },
-  { id: "svg-server-02", name: "SVG-Server 02", description: "SVG Alternative Server" },
-  { id: "svg-server-03", name: "SVG-Server 03", description: "SVG Backup Server" }
+  { id: "svg-demo", name: "SVG-Demo", description: "SVG Virtual Trading", endpoint: "green.binaryws.com" },
+  { id: "svg-real", name: "SVG-Real", description: "SVG Real Money Trading", endpoint: "ws.binaryws.com" },
+  { id: "svg-server-02", name: "SVG-Server 02", description: "SVG Alternative Server", endpoint: "ws.derivws.com" },
+  { id: "svg-server-03", name: "SVG-Server 03", description: "SVG Backup Server", endpoint: "ws.derivws.com" }
 ]
 
 const DERIV_MARKETS = [
@@ -267,9 +267,14 @@ export default function DerivAccountLinking() {
         throw new Error('App ID not found in OAuth configuration');
       }
       
-      // Use the correct WebSocket URL with the proper app_id
-      const wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${appId}`;
-      console.log('Connecting to:', wsUrl);
+      // Find the selected server endpoint from DERIV_SERVERS
+      const selectedServer = DERIV_SERVERS.find(s => s.id === server) || DERIV_SERVERS[1]; // Default to SVG-Real if not found
+      const serverEndpoint = selectedServer.endpoint;
+      
+      // Use the correct WebSocket URL with the proper app_id and server
+      const wsUrl = `wss://${serverEndpoint}/websockets/v3?app_id=${appId}`;
+      console.log('Connecting to Deriv server:', selectedServer.name);
+      console.log('WebSocket URL:', wsUrl);
       
       const ws = new WebSocket(wsUrl);
       
@@ -567,13 +572,37 @@ export default function DerivAccountLinking() {
     setIsConnected(false);
   }, [wsConnection]);
 
-  const handleMarketToggle = (market: string) => {
+  const isMarketSupportedForAccount = useCallback((market: string, accountType: string): boolean => {
+    // Synthetic accounts can only trade synthetic indices
+    if (accountType.includes('demo') && market !== 'synthetic_indices') {
+      return false;
+    }
+    
+    // SVG accounts typically support forex, commodities and synthetic indices
+    if (accountType.includes('svg')) {
+      return ['forex', 'synthetic_indices', 'commodities'].includes(market);
+    }
+    
+    // Default to allowing the market if we're not sure
+    return true;
+  }, []);
+
+  const handleMarketToggle = useCallback((market: string) => {
+    // If we have account information, validate the market is supported
+    if (selectedAccount) {
+      const accountType = selectedAccount.accountId.toLowerCase();
+      if (!isMarketSupportedForAccount(market, accountType)) {
+        toast.error(`${market.replace('_', ' ')} is not supported for this account type`);
+        return;
+      }
+    }
+    
     setMarkets(prev => 
       prev.includes(market) 
         ? prev.filter(m => m !== market) 
         : [...prev, market]
-    )
-  }
+    );
+  }, [selectedAccount, isMarketSupportedForAccount]);
 
   const validateForm = () => {
     if (!apiToken) return "API token is required"
@@ -789,8 +818,8 @@ export default function DerivAccountLinking() {
             <div className="rounded-lg bg-green-900/20 border border-green-500 p-4">
               <h3 className="text-lg font-semibold text-green-400 mb-2">Connection Successful!</h3>
               <p className="text-sm text-gray-300">Your Deriv account is now connected to our automated trading system.</p>
-          </div>
-          
+            </div>
+            
             {!tradingMode ? (
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold">Start Automated Trading</h3>
