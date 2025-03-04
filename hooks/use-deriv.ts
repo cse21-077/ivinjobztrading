@@ -3,37 +3,17 @@ import { useAuthState } from 'react-firebase-hooks/auth'
 import { auth } from '@/lib/firebase'
 
 interface DerivAccountDetails {
-  token: string
   accountId: string
-  isActive: boolean
-  type: 'financial' | 'synthetic' | 'standard'
-  server?: string
-  mt5Login?: string
-  mt5Password?: string
-}
-
-interface EAConfig {
-  server: string
-  eaName: string
-  pairs: string[]
-  lotSize: number
-  mt5Login?: string
-  mt5Password?: string
-}
-
-interface DerivAccount {
-  id: string
   token: string
   type: 'financial' | 'synthetic' | 'standard'
   server: string
-  isActive: boolean
-  eaConfig?: EAConfig
-  isConnected?: boolean
+  mt5Login?: string
+  mt5Password?: string
 }
 
 export function useDerivAccount() {
   const [user] = useAuthState(auth)
-  const [activeAccount, setActiveAccount] = useState<DerivAccount | null>(null)
+  const [activeAccount, setActiveAccount] = useState<DerivAccountDetails | null>(null)
   const [availableAccounts, setAvailableAccounts] = useState<DerivAccountDetails[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
   const [isConnected, setIsConnected] = useState(false)
@@ -71,12 +51,26 @@ export function useDerivAccount() {
           }
 
           if (response.msg_type === 'authorize' && response.authorize) {
+            // Get account status to get MT5 credentials
+            ws.send(JSON.stringify({ 
+              get_account_status: 1,
+              req_id: 2
+            }))
+          }
+
+          if (response.msg_type === 'get_account_status' && response.get_account_status) {
+            const status = response.get_account_status
+            const mt5Login = status.mt5_login_list?.[0]?.login
+            const mt5Password = status.mt5_login_list?.[0]?.password
+            const server = status.mt5_login_list?.[0]?.server || 'DerivDemo'
+
             const accounts = response.authorize.account_list.map((acc: any) => ({
               accountId: acc.account_id,
               token: acc.token,
-              isActive: true,
               type: acc.account_type as 'financial' | 'synthetic' | 'standard',
-              server: acc.server || 'DerivDemo'
+              server,
+              mt5Login,
+              mt5Password
             }))
 
             setAvailableAccounts(accounts)
@@ -161,12 +155,12 @@ export function useDerivAccount() {
             console.log("Account status:", status)
 
             setActiveAccount({
-              id: account.accountId,
+              accountId: account.accountId,
               token: account.token,
               type: account.type,
-              server: account.server || status.mt5_login_list?.[0]?.server || 'DerivDemo',
-              isActive: true,
-              isConnected: true
+              server: account.server,
+              mt5Login: account.mt5Login,
+              mt5Password: account.mt5Password
             })
             
             setIsLoading(false)
