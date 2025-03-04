@@ -78,7 +78,7 @@ export const parseOAuthResponse = async (token: string): Promise<DerivAccount[]>
               accountId: acc.account_id,
               token: acc.token,
               currency: acc.currency || 'USD',
-              type: acc.account_type as 'financial' | 'synthetic' | 'standard',
+              type: acc.account_type || 'standard',
               server: acc.server || 'DerivDemo'
             }));
 
