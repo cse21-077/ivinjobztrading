@@ -1,0 +1,320 @@
+[
+  {
+    "serverInfoEx": {
+      "serverName": "MetaQuotes-Demo",
+      "companyName": "MetaQuotes Ltd."
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivBVI-Server-02",
+      "companyName": "Deriv (BVI) Ltd.",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivBVI-Server",
+      "companyName": "Deriv (BVI) Ltd.",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivBVI-Server-03",
+      "companyName": "Deriv (BVI) Ltd.",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivBVI-Demo",
+      "companyName": "Deriv (BVI) Ltd.",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivFX-Server-02",
+      "companyName": "Deriv (FX) Ltd",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivFX-Server",
+      "companyName": "Deriv (FX) Ltd",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivFX-Server-03",
+      "companyName": "Deriv (FX) Ltd",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivFX-Demo",
+      "companyName": "Deriv (FX) Ltd",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivMU-Server",
+      "companyName": "Deriv (Mauritius) Ltd",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivMU-Demo",
+      "companyName": "Deriv (Mauritius) Ltd",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivSVG-Server-02",
+      "companyName": "Deriv (SVG) LLC",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivSVG-Server",
+      "companyName": "Deriv (SVG) LLC",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivSVG-Server-03",
+      "companyName": "Deriv (SVG) LLC",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivSVG-Demo",
+      "companyName": "Deriv (SVG) LLC",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivVU-Server-02",
+      "companyName": "Deriv (V) Ltd",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivVU-Server",
+      "companyName": "Deriv (V) Ltd",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivVU-Server-03",
+      "companyName": "Deriv (V) Ltd",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivVU-Demo",
+      "companyName": "Deriv (V) Ltd",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivUAE-Server-02",
+      "companyName": "Deriv Capital Contracts and Currencies L.L.C",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivUAE-Server",
+      "companyName": "Deriv Capital Contracts and Currencies L.L.C",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivUAE-Server-03",
+      "companyName": "Deriv Capital Contracts and Currencies L.L.C",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivUAE-Demo",
+      "companyName": "Deriv Capital Contracts and Currencies L.L.C",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivMT-Server-02",
+      "companyName": "Deriv Investments (Europe) Limited",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivMT-Server",
+      "companyName": "Deriv Investments (Europe) Limited",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivMT-Server-03",
+      "companyName": "Deriv Investments (Europe) Limited",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "DerivMT-Demo",
+      "companyName": "Deriv Investments (Europe) Limited",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Deriv-Server-02",
+      "companyName": "Deriv.com Limited",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Deriv-Server",
+      "companyName": "Deriv.com Limited",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Deriv-Server-03",
+      "companyName": "Deriv.com Limited",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Deriv-Demo",
+      "companyName": "Deriv.com Limited",
+      "companyLink": "www.deriv.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "CambodianDerivatives-Live",
+      "companyName": "Cambodian Derivatives Exchange Co., Ltd.",
+      "companyLink": "www.cdx.com.kh"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "GoldenFortuneDerivatives-Server",
+      "companyName": "Golden Fortune Derivatives Exchange Co., Ltd",
+      "companyLink": "www.gfdexchange.com"
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Exness-MT4Real5",
+      "companyName": "Exness (SC) Ltd",
+      "accountTypes": ["Standard", "Raw Spread"],
+      "platform": "MT4",
+      "recommendedRegion": ["Asia", "Middle East"],
+      "description": "Designed for traders in Asia and the Middle East, offering low spreads and stable connectivity."
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Exness-MT5Pro",
+      "companyName": "Exness (SC) Ltd",
+      "accountTypes": ["Pro", "Zero"],
+      "platform": "MT5",
+      "recommendedRegion": ["North America", "Europe"],
+      "description": "Tailored for advanced traders requiring tight spreads and high-speed execution."
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Exness-MT4Real3",
+      "companyName": "Exness (SC) Ltd",
+      "accountTypes": ["Standard"],
+      "platform": "MT4",
+      "recommendedRegion": ["Global"],
+      "description": "Ideal for beginners and traders using Standard accounts, offering reliable execution worldwide."
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Exness-MT5Real",
+      "companyName": "Exness (SC) Ltd",
+      "accountTypes": ["All MT5 accounts"],
+      "platform": "MT5",
+      "recommendedRegion": ["Global"],
+      "description": "A versatile server supporting all MT5 accounts, ensuring seamless performance for global traders."
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Exness-MT5Cent",
+      "companyName": "Exness (SC) Ltd",
+      "accountTypes": ["Cent"],
+      "platform": "MT5",
+      "recommendedRegion": ["Africa", "South America"],
+      "description": "Best for micro-lot trading and strategy testing with minimal risk, optimized for local traders."
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Exness-MT4Demo",
+      "companyName": "Exness (SC) Ltd",
+      "accountTypes": ["Demo"],
+      "platform": "MT4",
+      "recommendedRegion": ["Global"],
+      "description": "Provides a risk-free environment for traders to practice strategies and familiarize themselves with the MT4 platform."
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Exness-MT5Demo",
+      "companyName": "Exness (SC) Ltd",
+      "accountTypes": ["Demo"],
+      "platform": "MT5",
+      "recommendedRegion": ["Global"],
+      "description": "Offers a simulated trading environment on the MT5 platform for strategy testing and platform familiarization."
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Weltrade-MT5Real",
+      "companyName": "Weltrade LLC",
+      "accountTypes": ["SyntX Real"],
+      "platform": "MT5",
+      "description": "Server designated for real trading accounts with access to SyntX instruments on the MT5 platform."
+    }
+  },
+  {
+    "serverInfoEx": {
+      "serverName": "Weltrade-MT5Demo",
+      "companyName": "Weltrade LLC",
+      "accountTypes": ["SyntX Demo"],
+      "platform": "MT5",
+      "description": "Server designated for demo trading accounts with access to SyntX instruments on the MT5 platform."
+    }
+  }
+]

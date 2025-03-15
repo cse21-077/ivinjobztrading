@@ -1,0 +1,196 @@
+{
+  "syntheticIndices": {
+    "volatility": {
+      "name": "Volatility Indices",
+      "symbols": [
+        {
+          "symbolCode": "R_10",
+          "fullName": "Volatility 10 Index",
+          "volatility": 10,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "R_25",
+          "fullName": "Volatility 25 Index",
+          "volatility": 25,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "R_50",
+          "fullName": "Volatility 50 Index",
+          "volatility": 50,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "R_75",
+          "fullName": "Volatility 75 Index",
+          "volatility": 75,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "R_100",
+          "fullName": "Volatility 100 Index",
+          "volatility": 100,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "R_150",
+          "fullName": "Volatility 150 Index",
+          "volatility": 150,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "R_250",
+          "fullName": "Volatility 250 Index",
+          "volatility": 250,
+          "tradingHours": "24/7"
+        }
+      ]
+    },
+    "crashBoom": {
+      "name": "Crash/Boom Indices",
+      "symbols": [
+        {
+          "symbolCode": "CRASH300",
+          "fullName": "Crash 300 Index",
+          "movement": -300,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "CRASH500",
+          "fullName": "Crash 500 Index",
+          "movement": -500,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "CRASH1000",
+          "fullName": "Crash 1000 Index",
+          "movement": -1000,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "BOOM300",
+          "fullName": "Boom 300 Index",
+          "movement": 300,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "BOOM500",
+          "fullName": "Boom 500 Index",
+          "movement": 500,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "BOOM1000",
+          "fullName": "Boom 1000 Index",
+          "movement": 1000,
+          "tradingHours": "24/7"
+        }
+      ]
+    },
+    "jump": {
+      "name": "Jump Indices",
+      "symbols": [
+        {
+          "symbolCode": "JD10",
+          "fullName": "Jump 10 Index",
+          "probability": "Low",
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "JD25",
+          "fullName": "Jump 25 Index",
+          "probability": "Medium",
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "JD50",
+          "fullName": "Jump 50 Index",
+          "probability": "High",
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "JD75",
+          "fullName": "Jump 75 Index",
+          "probability": "Very High",
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "JD100",
+          "fullName": "Jump 100 Index",
+          "probability": "Extreme",
+          "tradingHours": "24/7"
+        }
+      ]
+    },
+    "step": {
+      "name": "Step Indices",
+      "symbols": [
+        {
+          "symbolCode": "STP50",
+          "fullName": "Step Index 50",
+          "pipIncrement": 50,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "STP100",
+          "fullName": "Step Index 100",
+          "pipIncrement": 100,
+          "tradingHours": "24/7"
+        }
+      ]
+    },
+    "rangeBreak": {
+      "name": "Range Break Indices",
+      "symbols": [
+        {
+          "symbolCode": "RB100",
+          "fullName": "Range Break 100 Index",
+          "range": 100,
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "RB200",
+          "fullName": "Range Break 200 Index",
+          "range": 200,
+          "tradingHours": "24/7"
+        }
+      ]
+    },
+    "dailyReset": {
+      "name": "Daily Reset Indices",
+      "symbols": [
+        {
+          "symbolCode": "1HZ10V",
+          "fullName": "Volatility 10 (1s) Index",
+          "resetTime": "00:00 GMT",
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "1HZ25V",
+          "fullName": "Volatility 25 (1s) Index",
+          "resetTime": "00:00 GMT",
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "1HZ50V",
+          "fullName": "Volatility 50 (1s) Index",
+          "resetTime": "00:00 GMT",
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "1HZ75V",
+          "fullName": "Volatility 75 (1s) Index",
+          "resetTime": "00:00 GMT",
+          "tradingHours": "24/7"
+        },
+        {
+          "symbolCode": "1HZ100V",
+          "fullName": "Volatility 100 (1s) Index",
+          "resetTime": "00:00 GMT",
+          "tradingHours": "24/7"
+        }
+      ]
+    }
+  }
+}

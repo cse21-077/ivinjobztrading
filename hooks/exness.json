@@ -1,0 +1,14 @@
+{
+  "instruments": {
+    "forex": [
+      "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD",
+      "USD/CAD", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY"
+    ],
+    "exotics": [
+      "USD/SGD", "USD/HKD", "USD/THB", "USD/MXN", "USD/ZAR"
+    ],
+    "metals": ["XAU/USD", "XAG/USD", "XPT/USD", "XPD/USD"],
+    "crypto": ["BTC/USD", "ETH/USD", "LTC/USD", "XRP/USD"],
+    "indices": ["US30", "NAS100", "SPX500", "UK100", "EU50"]
+  }
+}

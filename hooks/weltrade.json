@@ -1,0 +1,65 @@
+{
+    "weltrade": {
+      "brokerName": "Weltrade LLC",
+      "regulation": "IFSC Belize",
+      "accountType": "SyntX",
+      "instruments": [
+        {
+          "symbol": "FX Vol 20",
+          "description": "FX index with fixed volatility 20%",
+          "spreadType": "Floating",
+          "contractSize": 1,
+          "marginCall": "100%",
+          "stopOut": "50%",
+          "swapLong": "2.00% p.a.",
+          "swapShort": "2.00% p.a."
+        },
+        {
+          "symbol": "SFX Vol 99",
+          "description": "FX index with spikes + 99% volatility",
+          "spreadType": "Floating",
+          "contractSize": 1,
+          "marginCall": "100%",
+          "stopOut": "50%",
+          "swapLong": "32.00% p.a.",
+          "swapShort": "32.00% p.a."
+        },
+        {
+          "symbol": "PainX 400",
+          "description": "Growing Index with price drop per 400 ticks",
+          "spreadType": "Floating",
+          "contractSize": 1,
+          "marginCall": "100%",
+          "stopOut": "50%",
+          "swapLong": "-4.00",
+          "swapShort": "-4.00"
+        },
+        {
+          "symbol": "GainX 999",
+          "description": "Decreasing Index with jump per 999 ticks",
+          "spreadType": "Floating",
+          "contractSize": 1,
+          "marginCall": "100%",
+          "stopOut": "50%",
+          "swapLong": "-5.00",
+          "swapShort": "-5.00"
+        },
+        {
+          "symbol": "FlipX 5",
+          "description": "Direction change index with x5 multiplier",
+          "spreadType": "Floating",
+          "contractSize": 1,
+          "marginCall": "100%",
+          "stopOut": "50%",
+          "swapLong": "-3.00",
+          "swapShort": "-3.00"
+        }
+      ],
+      "metadata": {
+        "lastUpdated": "2023-12-01",
+        "swapNote": "Negative swaps = daily charge",
+        "tradingHours": "24/5",
+        "leverage": "1:500"
+      }
+    }
+  }
