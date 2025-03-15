@@ -19,12 +19,15 @@ const nextConfig = {
     ignoreBuildErrors: process.env.NODE_ENV === 'production',
   },
   webpack: (config) => {
+    // Exclude ssh2 from Webpack bundling
+    config.externals.push('ssh2');
+
     // SVGR config
     config.module.rules.push({
       test: /\.svg$/,
       use: ['@svgr/webpack'],
     });
-    
+
     return config;
   },
   // Add trailing slash to improve routing
