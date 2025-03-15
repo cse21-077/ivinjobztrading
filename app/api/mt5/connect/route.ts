@@ -43,6 +43,13 @@ async function createSSHConnection(): Promise<Client> {
 
       // Read private key and establish connection
       try {
+        // Check if the key exists first
+        if (!fs.existsSync(VPS_PRIVATE_KEY_PATH)) {
+          console.error(`SSH key not found at path: ${VPS_PRIVATE_KEY_PATH}`);
+          reject(new Error(`SSH key not found at path: ${VPS_PRIVATE_KEY_PATH}`));
+          return;
+        }
+        
         const privateKey = fs.readFileSync(VPS_PRIVATE_KEY_PATH);
         conn.connect({
           host: VPS_HOST,
@@ -51,9 +58,11 @@ async function createSSHConnection(): Promise<Client> {
           privateKey: privateKey,
         });
       } catch (err) {
+        console.error(`Failed to read private key at ${VPS_PRIVATE_KEY_PATH}:`, err);
         reject(new Error(`Failed to read private key at ${VPS_PRIVATE_KEY_PATH}: ${err}`));
       }
     } catch (error) {
+      console.error("SSH connection creation error:", error);
       reject(error);
     }
   });
@@ -87,6 +96,29 @@ async function executeCommand(conn: Client, command: string): Promise<string> {
       });
     });
   });
+}
+
+/**
+ * Get total count of active MT5 instances
+ */
+async function getActiveInstanceCount(): Promise<number> {
+  let conn: Client | null = null;
+
+  try {
+    conn = await createSSHConnection();
+    const result = await executeCommand(
+      conn,
+      `docker ps --filter "name=mt5-instance-" --format "{{.Names}}" | wc -l`
+    );
+
+    const count = parseInt(result.trim());
+    return isNaN(count) ? 0 : count;
+  } catch (error) {
+    console.error("Error counting active instances:", error);
+    return Object.values(instanceMap).filter(Boolean).length; // Fallback to in-memory count
+  } finally {
+    if (conn) conn.end();
+  }
 }
 
 /**
@@ -251,29 +283,6 @@ export async function POST(request: NextRequest) {
         { status: 503 }
       );
     }
-
-    /**
- * Get total count of active MT5 instances
- */
-async function getActiveInstanceCount(): Promise<number> {
-  let conn: Client | null = null;
-
-  try {
-    conn = await createSSHConnection();
-    const result = await executeCommand(
-      conn,
-      `docker ps --filter "name=mt5-instance-" --format "{{.Names}}" | wc -l`
-    );
-
-    const count = parseInt(result.trim());
-    return isNaN(count) ? 0 : count;
-  } catch (error) {
-    console.error("Error counting active instances:", error);
-    return Object.values(instanceMap).filter(Boolean).length; // Fallback to in-memory count
-  } finally {
-    if (conn) conn.end();
-  }
-}
 
     // Start the MT5 instance
     const success = await startMT5Instance(
