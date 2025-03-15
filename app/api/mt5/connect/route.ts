@@ -7,7 +7,7 @@ import * as path from "path";
 const VPS_HOST = process.env.VPS_HOST || "129.151.171.200";
 const VPS_USERNAME = process.env.VPS_USERNAME || "ubuntu";
 const VPS_PORT = parseInt(process.env.VPS_PORT || "22");
-const MAX_INSTANCES = parseInt(process.env.MAX_INSTANCES || "30");
+const MAX_INSTANCES = parseInt(process.env.MAX_INSTANCES || "15"); // Reduced to 15 instances
 
 // Use absolute path to locate the SSH key
 const VPS_PRIVATE_KEY_PATH = path.join(process.cwd(), "lib", "ssh-key-2025-03-02.key");
@@ -172,7 +172,7 @@ async function startMT5Instance(
     conn = await createSSHConnection();
 
     // Path for instance-specific docker-compose file
-    const composeFilePath = `/home/ubuntu/mt5-instances/docker-compose-${instanceId}.yml`;
+    const composeFilePath = `/home/ubuntu/phase1-compose/docker-compose-${instanceId}.yml`;
 
     // Create MT5-login.ini file content
     const iniContent = `
@@ -186,8 +186,8 @@ Symbol=${symbol}
 TimeFrame=${timeframe || "M5"}
 `.trim();
 
-    // Path inside the container where the file will be placed
-    const containerIniPath = "/root/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Files/MT5-login.ini";
+    // Path inside the container where the file will be placed (updated to .mt5 path)
+    const containerIniPath = "/root/.mt5/drive_c/Program Files/MetaTrader 5/MQL5/Files/MT5-login.ini";
 
     // Create a temporary file with the content on the VPS
     const tempFilePath = `/tmp/mt5-login-${instanceId}.ini`;
@@ -195,25 +195,25 @@ TimeFrame=${timeframe || "M5"}
 ${iniContent}
 EOL`);
 
-    // Generate docker-compose.yml content
+    // Generate docker-compose.yml content with correct image name
     const composeContent = `
-version: '3'
-services:
-  mt5-instance-${instanceId}:
-    image: local-mt5-image:latest
-    container_name: mt5-instance-${instanceId}
-    volumes:
-      - ${tempFilePath}:${containerIniPath}
-    restart: unless-stopped
-`.trim();
+      version: '3'
+      services:
+        mt5-instance-${instanceId}:
+          image: mt5-image:v1
+          container_name: mt5-instance-${instanceId}
+          volumes:
+            - ${tempFilePath}:${containerIniPath}
+          restart: unless-stopped
+      `.trim();
 
     // Write the docker-compose.yml file to the VPS
     await executeCommand(conn, `cat > ${composeFilePath} << 'EOL'
-${composeContent}
-EOL`);
+    ${composeContent}
+    EOL`);
 
     // Start the instance using docker-compose
-    await executeCommand(conn, `cd /home/ubuntu/mt5-instances && docker-compose -p mt5-instance-${instanceId} up -d`);
+    await executeCommand(conn, `cd /home/ubuntu/phase1-compose && docker-compose -f docker-compose-${instanceId}.yml up -d`);
 
     // Store instance info in our map
     instanceMap[instanceId] = {
