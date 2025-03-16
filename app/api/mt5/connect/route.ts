@@ -64,6 +64,7 @@ async function createSSHConnection(): Promise<Client> {
 
 // Update the executeCommand function to ignore Docker orphan warnings
 async function executeCommand(conn: Client, command: string): Promise<string> {
+  console.log('Executing command:', command.slice(0, 100) + '...');
   return new Promise((resolve, reject) => {
     conn.exec(command, (err, stream) => {
       if (err) {
@@ -109,14 +110,34 @@ export async function POST(request: NextRequest) {
   try {
     console.log('1. Parsing request body...');
     const body = await request.json();
-    console.log('2. Request body:', { 
-      ...body, 
-      password: '[HIDDEN]' 
+    console.log('2. Full request details:', { 
+      ...body,  // Show all details including password for debugging
+      timestamp: new Date().toISOString(),
+      headers: Object.fromEntries(request.headers.entries())
     });
 
     const { accountId, password, server, userId, symbol, timeframe } = body;
 
+    // Add validation logging
+    console.log('3. Validating input:', {
+      hasAccountId: !!accountId,
+      hasPassword: !!password,
+      hasServer: !!server,
+      hasUserId: !!userId,
+      hasSymbol: !!symbol,
+      hasTimeframe: !!timeframe
+    });
+
     logEvent("Connection request received", { userId, accountId, server, symbol, timeframe });
+
+    // Add before SSH connection
+    console.log('4. SSH Connection details:', {
+      host: VPS_HOST,
+      port: VPS_PORT,
+      username: VPS_USERNAME,
+      hasPrivateKey: !!process.env.VPS_PRIVATE_KEY,
+      readyTimeout: 30000
+    });
 
     // Add before instance check
     console.log('3. Checking for existing instance...');
@@ -154,6 +175,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Add to startMT5Instance
+    console.log('5. Starting MT5 instance with config:', {
+      instanceId,
+      accountId,
+      server,
+      symbol,
+      timeframe,
+      tempFilePath: `/tmp/mt5-login-${instanceId}.ini`,
+      composePath: `/home/ubuntu/phase1-compose/docker-compose-${instanceId}.yml`
+    });
+
     // Add before startMT5Instance
     console.log('7. Attempting to start MT5 instance:', instanceId);
     const started = await startMT5Instance(
@@ -183,16 +215,23 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    logEvent("Error in POST handler:", error);
-    console.error('❌ Connection error:', {
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      timestamp: new Date().toISOString()
+    console.error('❌ Connection Error Details:', {
+      error: error instanceof Error ? {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      } : error,
+      timestamp: new Date().toISOString(),
+      requestUrl: request.url,
+      method: request.method,
+      headers: Object.fromEntries(request.headers.entries())
     });
+
     return NextResponse.json(
       { 
         success: false, 
-        message: error instanceof Error ? error.message : "Internal server error"
+        message: error instanceof Error ? error.message : "Internal server error",
+        logs
       },
       { status: 500 }
     );
