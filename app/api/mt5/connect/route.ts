@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Client } from "ssh2";
+import { Client, ClientChannel } from "ssh2";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -26,30 +26,76 @@ interface InstanceInfo {
 const instanceMap: Record<number, InstanceInfo | null> = {};
 let totalActiveUsers = 0;
 
+// Add logging helper
+const logEvent = (message: string, data?: any) => {
+  const timestamp = new Date().toISOString();
+  const logMessage = data ? 
+    `[${timestamp}] ${message}: ${JSON.stringify(data)}` :
+    `[${timestamp}] ${message}`;
+  console.log(logMessage);
+  return logMessage; // Return for response logging
+};
+
 /**
  * Establishes an SSH connection to the VPS
  */
 const createSSHConnection = async (): Promise<Client> => {
   return new Promise((resolve, reject) => {
+    logEvent("Creating SSH connection");
     const conn = new Client();
 
-    conn.on("ready", () => resolve(conn));
-    conn.on("error", (err) => reject(err));
+    conn.on("ready", () => {
+      logEvent("SSH connection ready");
+      resolve(conn);
+    });
+
+    conn.on("error", (err: Error & { code?: string }) => {
+      logEvent("SSH connection error", {
+        error: err.message,
+        stack: err.stack,
+        code: err.code || 'unknown'  // Add fallback for code
+      });
+      reject(err);
+    });
 
     try {
-      const privateKey = Buffer.from(process.env.VPS_PRIVATE_KEY || '', 'base64').toString('utf-8');
+      // Log environment variables (excluding private key)
+      logEvent("Connection config", {
+        host: process.env.VPS_HOST,
+        username: process.env.VPS_USERNAME,
+        port: process.env.VPS_PORT,
+        hasPrivateKey: !!process.env.VPS_PRIVATE_KEY
+      });
 
-      if (!process.env.VPS_HOST || !process.env.VPS_USERNAME) {
-        throw new Error('Missing VPS configuration');
+      if (!process.env.VPS_PRIVATE_KEY) {
+        throw new Error('Missing private key');
       }
+
+      const privateKey = Buffer.from(process.env.VPS_PRIVATE_KEY, 'base64').toString('utf-8');
+      
+      // Log key format check (safely)
+      logEvent("Private key check", {
+        hasBeginMarker: privateKey.includes('BEGIN RSA PRIVATE KEY'),
+        hasEndMarker: privateKey.includes('END RSA PRIVATE KEY'),
+        keyLength: privateKey.length,
+        isBase64: /^[A-Za-z0-9+/=]+$/.test(process.env.VPS_PRIVATE_KEY)
+      });
 
       conn.connect({
         host: process.env.VPS_HOST,
         username: process.env.VPS_USERNAME,
-        port: 22,
-        privateKey
+        port: parseInt(process.env.VPS_PORT || '22'),
+        privateKey,
+        debug: (msg) => logEvent("SSH Debug", { message: msg }),
+        readyTimeout: 30000 // Increase timeout to 30 seconds
       });
     } catch (error) {
+      const err = error as Error;
+      logEvent("SSH connection setup error", {
+        message: err.message,
+        stack: err.stack,
+        type: err.name
+      });
       reject(error);
     }
   });
@@ -257,82 +303,83 @@ TimeFrame=${timeframe || "M5"}
  * API handler for connecting to MT5
  */
 export async function POST(request: NextRequest) {
+  const logs: string[] = [];
   try {
-    const body = await request.json();
-    const { accountId, password, server, userId, symbol, timeframe } = body;
+    logs.push(logEvent("Received POST request"));
 
-    console.log("Received connection request for:", { userId, accountId, server, symbol, timeframe });
+    // Log request details
+    const url = request.url;
+    const headers = Object.fromEntries(request.headers);
+    logs.push(logEvent("Request details", { url, headers }));
+
+    const body = await request.json();
+    logs.push(logEvent("Request body", {
+      ...body,
+      password: '[REDACTED]' // Don't log sensitive data
+    }));
+
+    const { accountId, password, server, userId, symbol, timeframe } = body;
 
     // Validation
     if (!accountId || !password || !server || !userId || !symbol) {
+      logs.push(logEvent("Validation failed - Missing fields"));
       return NextResponse.json(
-        { success: false, message: "Missing required fields" },
+        { 
+          success: false, 
+          message: "Missing required fields",
+          logs 
+        },
         { status: 400 }
       );
     }
 
-    // Check if this user already has an active instance
-    const existingInstance = Object.entries(instanceMap).find(
-      ([_, info]) => info && info.userId === userId
-    );
+    // Test SSH connection
+    logs.push(logEvent("Testing SSH connection"));
+    const conn = await createSSHConnection();
+    
+    // Try a simple command
+    const testResult = await new Promise<string>((resolve, reject) => {
+      conn.exec('echo "test connection"', (err: Error | undefined, stream: ClientChannel) => {
+        if (err) {
+          logs.push(logEvent("SSH exec error", { error: err.message }));
+          reject(err);
+          return;
+        }
 
-    if (existingInstance) {
-      const [instanceId, info] = existingInstance;
-      return NextResponse.json({
-        success: true,
-        message: "Already connected",
-        instanceId: parseInt(instanceId),
-        tradingSymbol: info!.symbol,
-        timeframe: info!.timeframe
+        let data = '';
+        stream.on('data', (chunk: Buffer) => data += chunk);
+        stream.on('end', () => resolve(data.toString().trim()));
+        stream.on('error', (err: Error) => {
+          logs.push(logEvent("SSH stream error", { error: err.message }));
+          reject(err);
+        });
       });
-    }
+    });
 
-    // Find an available instance
-    const availableInstanceId = await findAvailableInstance();
+    logs.push(logEvent("SSH test result", { output: testResult }));
 
-    if (availableInstanceId === null) {
-      const activeCount = await getActiveInstanceCount();
-      return NextResponse.json(
-        {
-          success: false,
-          message: `The Arm Server is currently full, please try again later. Active users: ${activeCount}/${MAX_INSTANCES}`,
-          isFull: true,
-          activeUsers: activeCount
-        },
-        { status: 503 }
-      );
-    }
-
-    // Start the MT5 instance
-    const success = await startMT5Instance(
-      availableInstanceId,
-      userId,
-      accountId,
-      password,
-      server,
-      symbol,
-      timeframe
-    );
-
-    if (success) {
-      return NextResponse.json({
-        success: true,
-        message: "MT5 instance started successfully",
-        instanceId: availableInstanceId,
-        tradingSymbol: symbol,
-        timeframe: timeframe || "M5"
-      });
-    } else {
-      return NextResponse.json(
-        { success: false, message: "Failed to start MT5 instance" },
-        { status: 500 }
-      );
-    }
+    return NextResponse.json({ 
+      success: true, 
+      message: "Connection successful",
+      test: testResult,
+      logs
+    });
 
   } catch (error) {
-    console.error("MT5 connect error:", error);
+    const err = error as Error;
+    logs.push(logEvent("Error in POST handler", {
+      message: err.message,
+      stack: err.stack,
+      type: err.name
+    }));
+
     return NextResponse.json(
-      { success: false, message: "Internal server error" },
+      { 
+        success: false, 
+        message: "Connection failed",
+        error: err.message,
+        logs
+      },
       { status: 500 }
     );
   }

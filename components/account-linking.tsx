@@ -175,6 +175,15 @@ export default function AccountLinking() {
     setConnectionError(null);
 
     try {
+      console.log("Connection attempt:", {
+        accountId,
+        server,
+        userId: user?.uid,
+        symbol: selectedPair?.name,
+        timeframe,
+        timestamp: new Date().toISOString()
+      });
+
       const response = await fetch("/api/mt5/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -183,12 +192,24 @@ export default function AccountLinking() {
           password,
           server,
           userId: user?.uid,
-          symbol: selectedPair.name,
+          symbol: selectedPair?.name,
           timeframe,
         }),
       });
 
+      console.log("Server response status:", {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers)
+      });
+
       const data = await response.json();
+      console.log("Server response data:", {
+        success: data.success,
+        message: data.message,
+        logs: data.logs,
+        error: data.error
+      });
 
       if (data.success) {
         setIsConnected(true);
@@ -223,6 +244,13 @@ export default function AccountLinking() {
         router.refresh(); // Force a refresh of the new page
         return; // Exit early after successful connection
       } else {
+        console.error("Connection failed:", {
+          status: response.status,
+          error: data.error,
+          message: data.message,
+          serverLogs: data.logs
+        });
+
         if (response.status === 400) {
           setConnectionError("Missing required fields. Please fill in all fields.");
         } else if (response.status === 401) {
@@ -232,7 +260,11 @@ export default function AccountLinking() {
         }
       }
     } catch (error) {
-      console.error("Connection Error:", error);
+      console.error("Connection Error:", {
+        error,
+        message: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString()
+      });
       setConnectionError("Internal server error. Please try again later.");
     } finally {
       setIsConnecting(false);
