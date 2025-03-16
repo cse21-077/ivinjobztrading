@@ -34,6 +34,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-firebase-hooks": "^5.1.1",
+    "react-toastify": "^11.0.5",
     "serialize-javascript": "^6.0.2",
     "sonner": "^2.0.1",
     "ssh2": "^1.16.0",

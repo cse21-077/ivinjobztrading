@@ -49,7 +49,7 @@ async function createSSHConnection(): Promise<Client> {
           reject(new Error(`SSH key not found at path: ${VPS_PRIVATE_KEY_PATH}`));
           return;
         }
-        
+
         const privateKey = fs.readFileSync(VPS_PRIVATE_KEY_PATH);
         conn.connect({
           host: VPS_HOST,
@@ -88,11 +88,10 @@ async function executeCommand(conn: Client, command: string): Promise<string> {
       });
 
       stream.on('close', () => {
-        if (errorOutput && !output) {
-          reject(new Error(errorOutput));
-        } else {
-          resolve(output);
+        if (errorOutput) {
+          console.warn('Command stderr:', errorOutput); // Log warnings but don't fail
         }
+        resolve(output); // Always resolve if we get here
       });
     });
   });
@@ -155,6 +154,26 @@ async function findAvailableInstance(): Promise<number | null> {
 }
 
 /**
+ * Write file content to the VPS using base64 encoding
+ */
+async function writeFileToVPS(conn: Client, content: string, filePath: string): Promise<boolean> {
+  try {
+    console.log(`[${Date.now()}] Writing file to ${filePath}`);
+
+    // Use echo with base64 encoding to avoid here-document issues
+    const base64Content = Buffer.from(content).toString('base64');
+    const command = `echo '${base64Content}' | base64 -d > ${filePath}`;
+
+    await executeCommand(conn, command);
+    console.log(`[${Date.now()}] File written successfully to ${filePath}`);
+    return true;
+  } catch (error) {
+    console.error(`[${Date.now()}] Error writing file to ${filePath}:`, error);
+    return false;
+  }
+}
+
+/**
  * Start a specific MT5 instance with user configuration
  */
 async function startMT5Instance(
@@ -169,6 +188,7 @@ async function startMT5Instance(
   let conn: Client | null = null;
 
   try {
+    console.log(`[${Date.now()}] Starting MT5 instance ${instanceId} for user ${userId}`);
     conn = await createSSHConnection();
 
     // Path for instance-specific docker-compose file
@@ -186,34 +206,45 @@ Symbol=${symbol}
 TimeFrame=${timeframe || "M5"}
 `.trim();
 
-    // Path inside the container where the file will be placed (updated to .mt5 path)
+    // Path inside the container where the file will be placed
     const containerIniPath = "/root/.mt5/drive_c/Program Files/MetaTrader 5/MQL5/Files/MT5-login.ini";
 
     // Create a temporary file with the content on the VPS
     const tempFilePath = `/tmp/mt5-login-${instanceId}.ini`;
-    await executeCommand(conn, `cat > ${tempFilePath} << 'EOL'
-${iniContent}
-EOL`);
+    console.log(`[${Date.now()}] Creating config file for instance ${instanceId}`);
 
-    // Generate docker-compose.yml content with correct image name
+    // Write the ini file using our new method
+    const iniWriteSuccess = await writeFileToVPS(conn, iniContent, tempFilePath);
+    if (!iniWriteSuccess) {
+      throw new Error(`Failed to write INI file to ${tempFilePath}`);
+    }
+
+    // Generate docker-compose.yml content
     const composeContent = `
-      version: '3'
-      services:
-        mt5-instance-${instanceId}:
-          image: mt5-image:v1
-          container_name: mt5-instance-${instanceId}
-          volumes:
-            - ${tempFilePath}:${containerIniPath}
-          restart: unless-stopped
-      `.trim();
+    services:
+      mt5-instance-${instanceId}:
+        image: mt5-image:v1
+        container_name: mt5-instance-${instanceId}
+        volumes:
+          - ${tempFilePath}:${containerIniPath}
+        restart: unless-stopped
+        command: /home/trader/start_mt5.sh  # Absolute path
+    `.trim();
 
-    // Write the docker-compose.yml file to the VPS
-    await executeCommand(conn, `cat > ${composeFilePath} << 'EOL'
-    ${composeContent}
-    EOL`);
+    // Write the docker-compose.yml file using our new method
+    console.log(`[${Date.now()}] Creating docker-compose file for instance ${instanceId}`);
+    const composeWriteSuccess = await writeFileToVPS(conn, composeContent, composeFilePath);
+    if (!composeWriteSuccess) {
+      throw new Error(`Failed to write compose file to ${composeFilePath}`);
+    }
 
     // Start the instance using docker-compose
-    await executeCommand(conn, `cd /home/ubuntu/phase1-compose && docker-compose -f docker-compose-${instanceId}.yml up -d`);
+    console.log(`[${Date.now()}] Starting docker container for instance ${instanceId}`);
+    await executeCommand(
+      conn,
+      `cd /home/ubuntu/phase1-compose && docker compose -f docker-compose-${instanceId}.yml up -d`
+    );
+    // Notice the space between "docker" and "compose" - this is intentional ✅
 
     // Store instance info in our map
     instanceMap[instanceId] = {
@@ -224,10 +255,11 @@ EOL`);
     };
 
     totalActiveUsers = Object.values(instanceMap).filter(Boolean).length;
+    console.log(`[${Date.now()}] MT5 instance ${instanceId} started successfully`);
 
     return true;
   } catch (error) {
-    console.error(`Error starting MT5 instance ${instanceId}:`, error);
+    console.error(`[${Date.now()}] Error starting MT5 instance ${instanceId}:`, error);
     return false;
   } finally {
     if (conn) conn.end();

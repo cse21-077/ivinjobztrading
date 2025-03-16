@@ -110,25 +110,45 @@ export default function AccountLinking() {
         setLoadingConnection(false);
         return;
       }
+
       try {
         setLoadingConnection(true);
         const docRef = doc(db, "mtConnections", user.uid);
         const docSnap = await getDoc(docRef);
+        
         if (docSnap.exists()) {
           const data = docSnap.data();
-          setIsConnected(data.isConnected || false);
-          setInstanceId(data.instanceId || null);
-          setSelectedPair(data.tradingPair || null);
-          setTimeframe(data.timeframe || "M5");
-          setAccountId(data.accountId || "");
-          setServer(data.server || "");
+          const isConnected = data.isConnected || false;
+          
+          // Only set connection status, don't redirect
+          setIsConnected(isConnected);
+          
+          if (isConnected) {
+            // Only set these if connected
+            setInstanceId(data.instanceId || null);
+            setSelectedPair(data.tradingPair || null);
+            setTimeframe(data.timeframe || "M5");
+            setAccountId(data.accountId || "");
+            setServer(data.server || "");
+          } else {
+            // Clear form if not connected
+            setInstanceId(null);
+            setSelectedPair(null);
+            setPassword("");
+            setServer("");
+          }
+        } else {
+          // New user, no connection data
+          setIsConnected(false);
         }
       } catch (error) {
+        console.error("Connection status error:", error);
         toast.error("Failed to load connection status");
       } finally {
         setLoadingConnection(false);
       }
     };
+    
     if (!loading) loadConnectionStatus();
   }, [user, loading]);
 
@@ -169,9 +189,17 @@ export default function AccountLinking() {
       });
 
       const data = await response.json();
+
       if (data.success) {
         setIsConnected(true);
         setInstanceId(data.instanceId);
+
+        // Store connection details in localStorage
+        localStorage.setItem('instanceId', data.instanceId.toString());
+        localStorage.setItem('userId', user?.uid || '');
+        localStorage.setItem('tradingSymbol', selectedPair.name);
+        localStorage.setItem('timeframe', timeframe);
+
         if (user) {
           await setDoc(
             doc(db, "mtConnections", user.uid),
@@ -187,8 +215,13 @@ export default function AccountLinking() {
             { merge: true }
           );
         }
+        
         toast.success("Successfully connected to MetaTrader");
+        
+        // Force navigation to trading area
         router.push("/tradingarea");
+        router.refresh(); // Force a refresh of the new page
+        return; // Exit early after successful connection
       } else {
         if (response.status === 400) {
           setConnectionError("Missing required fields. Please fill in all fields.");
@@ -199,6 +232,7 @@ export default function AccountLinking() {
         }
       }
     } catch (error) {
+      console.error("Connection Error:", error);
       setConnectionError("Internal server error. Please try again later.");
     } finally {
       setIsConnecting(false);
@@ -207,28 +241,53 @@ export default function AccountLinking() {
 
   const handleDisconnect = async () => {
     try {
-      await fetch("/api/mt5/disconnect", {
-        method: "POST",
+      const response = await fetch("/api/mt5/disconnect", {
+        method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instanceId, userId: user?.uid }),
+        body: JSON.stringify({ 
+          instanceId, 
+          userId: user?.uid,
+          symbol: selectedPair?.name,
+          timeframe
+        }),
       });
-      setIsConnected(false);
-      setInstanceId(null);
-      setPassword("");
-      setSelectedPair(null);
-      if (user) {
-        await setDoc(
-          doc(db, "mtConnections", user.uid),
-          {
-            isConnected: false,
-            instanceId: null,
-            lastDisconnected: new Date().toISOString()
-          },
-          { merge: true }
-        );
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Update local state
+        setIsConnected(false);
+        setInstanceId(null);
+        setPassword("");
+        setSelectedPair(null);
+        
+        // Clear localStorage
+        localStorage.clear();
+        
+        // Update Firestore
+        if (user) {
+          await setDoc(
+            doc(db, "mtConnections", user.uid),
+            {
+              isConnected: false,
+              instanceId: null,
+              lastDisconnected: new Date().toISOString()
+            },
+            { merge: true }
+          );
+        }
+
+        toast.success("Disconnected successfully");
+        
+        // Only redirect if we're on the trading area page
+        if (window.location.pathname === '/tradingarea') {
+          router.replace('/');
+        }
+      } else {
+        toast.error(data.message || "Error disconnecting");
       }
-      toast.success("Disconnected successfully");
     } catch (error) {
+      console.error("Disconnect error:", error);
       toast.error("Error disconnecting");
     }
   };

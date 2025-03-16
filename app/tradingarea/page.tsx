@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import { useRouter } from "next/navigation";
+import { toast } from "react-toastify";
 
 export default function TradingArea() {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -13,19 +14,28 @@ export default function TradingArea() {
   const router = useRouter();
 
   useEffect(() => {
-    // Get connection status from localStorage
-    const storedInstanceId = localStorage.getItem('instanceId');
-    const storedUserId = localStorage.getItem('userId');
-    
-    // If no stored connection details, redirect to login
-    if (!storedInstanceId || !storedUserId) {
-      router.push('/');
-      return;
-    }
-    
-    setIsLoaded(true);
-    setArmConnected(true);
-    setMtConnected(true);
+    // Check connection status immediately on mount
+    const checkConnection = () => {
+      const storedInstanceId = localStorage.getItem('instanceId');
+      const storedUserId = localStorage.getItem('userId');
+      
+      if (!storedInstanceId || !storedUserId) {
+        router.replace('/');
+        return;
+      }
+      
+      setIsLoaded(true);
+      setArmConnected(true);
+      setMtConnected(true);
+    };
+
+    checkConnection();
+
+    // Set up interval to check connection status
+    const intervalId = setInterval(checkConnection, 5000);
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
   }, [router]);
 
   const handleDisconnect = async () => {
@@ -34,40 +44,48 @@ export default function TradingArea() {
       
       const instanceId = localStorage.getItem('instanceId');
       const userId = localStorage.getItem('userId');
+      const tradingSymbol = localStorage.getItem('tradingSymbol');
+      const timeframe = localStorage.getItem('timeframe');
       
-      if (!instanceId || !userId) {
-        console.error('Missing instanceId or userId for disconnect');
+      if (!instanceId || !userId || !tradingSymbol || !timeframe) {
+        console.error('Missing required disconnect information');
+        toast.error('Missing connection information');
         return;
       }
       
-      const response = await fetch('/api/disconnect', {
-        method: 'POST',
+      const response = await fetch('/api/mt5/disconnect', {
+        method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           instanceId: parseInt(instanceId),
-          userId: userId
+          userId,
+          symbol: tradingSymbol,
+          timeframe
         })
       });
       
-      if (response.ok) {
+      const data = await response.json();
+
+      if (response.ok && data.success) {
         setArmConnected(false);
         setMtConnected(false);
         
-        // Clear stored connection info
-        localStorage.removeItem('instanceId');
-        localStorage.removeItem('userId');
+        // Clear all stored data
+        localStorage.clear();
         
-        // Redirect to home page after short delay
+        toast.success("Successfully disconnected");
+        
         setTimeout(() => {
-          router.push('/');
+          router.replace('/');
         }, 1500);
       } else {
-        const errorData = await response.json();
-        console.error('Disconnect failed:', errorData.message);
+        toast.error(data.message || 'Disconnect failed');
+        console.error('Disconnect failed:', data.message);
       }
     } catch (error) {
+      toast.error('Error disconnecting');
       console.error('Error disconnecting:', error);
     } finally {
       setIsDisconnecting(false);
@@ -97,7 +115,7 @@ export default function TradingArea() {
       {/* Bottom Card Section */}
       <div className="pb-8 px-4">
         <div className="bg-white rounded-2xl shadow-xl p-6 max-w-md mx-auto">
-          <h2 className="text-xl font-semibold text-center mb-4">Relax I&apos;m chopping</h2>
+          <h2 className="text-xl font-semibold text-center mb-4">Relax I&apos;m chopping📈</h2>
 
           <Button 
             onClick={handleDisconnect}
