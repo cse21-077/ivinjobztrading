@@ -31,35 +31,54 @@ async function createSSHConnection(): Promise<Client> {
   return new Promise((resolve, reject) => {
     try {
       const conn = new Client();
+      
+      // Add connection timeout
+      const timeout = setTimeout(() => {
+        conn.end();
+        reject(new Error('SSH connection timeout'));
+      }, 10000);
 
       conn.on("ready", () => {
+        clearTimeout(timeout);
         resolve(conn);
       });
 
       conn.on("error", (err) => {
+        clearTimeout(timeout);
         console.error("SSH connection error:", err);
         reject(err);
       });
 
-      // Read private key and establish connection
+      // Get the private key from environment variable
+      const base64Key = process.env.VPS_PRIVATE_KEY;
+      if (!base64Key) {
+        throw new Error('VPS_PRIVATE_KEY environment variable is not set');
+      }
+
       try {
-        // Check if the key exists first
-        if (!fs.existsSync(VPS_PRIVATE_KEY_PATH)) {
-          console.error(`SSH key not found at path: ${VPS_PRIVATE_KEY_PATH}`);
-          reject(new Error(`SSH key not found at path: ${VPS_PRIVATE_KEY_PATH}`));
-          return;
+        // Decode and format the private key
+        const privateKey = Buffer.from(base64Key, 'base64').toString('utf-8')
+          .replace(/\\n/g, '\n')  // Replace literal \n with newlines
+          .trim();                // Remove any extra whitespace
+
+        // Verify key format
+        if (!privateKey.includes('-----BEGIN RSA PRIVATE KEY-----')) {
+          throw new Error('Invalid private key format');
         }
 
-        const privateKey = fs.readFileSync(VPS_PRIVATE_KEY_PATH);
+        // Connect with the formatted key
         conn.connect({
-          host: VPS_HOST,
-          port: VPS_PORT,
-          username: VPS_USERNAME,
-          privateKey: privateKey,
+          host: process.env.VPS_HOST,
+          port: parseInt(process.env.VPS_PORT || '22'),
+          username: process.env.VPS_USERNAME,
+          privateKey,
+          readyTimeout: 10000,
+          keepaliveInterval: 5000,
+          debug: (msg) => console.log('SSH Debug:', msg) // Add debug logging
         });
-      } catch (err) {
-        console.error(`Failed to read private key at ${VPS_PRIVATE_KEY_PATH}:`, err);
-        reject(new Error(`Failed to read private key at ${VPS_PRIVATE_KEY_PATH}: ${err}`));
+      } catch (keyError) {
+        console.error('Private key processing error:', keyError);
+        reject(keyError);
       }
     } catch (error) {
       console.error("SSH connection creation error:", error);
