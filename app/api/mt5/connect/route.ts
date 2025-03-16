@@ -11,6 +11,11 @@ const VPS_USERNAME = process.env.VPS_USERNAME || "ubuntu";
 const VPS_PORT = parseInt(process.env.VPS_PORT || "22");
 const MAX_INSTANCES = parseInt(process.env.MAX_INSTANCES || "15");
 
+// Timeout values
+const SSH_TIMEOUT = 45000;    // 45 seconds
+const COMMAND_TIMEOUT = 30000; // 30 seconds
+const REQUEST_TIMEOUT = 45000; // 45 seconds (match Netlify timeout)
+
 // Instance tracking
 interface InstanceInfo {
   userId: string;
@@ -88,8 +93,13 @@ async function createSSHConnection(): Promise<Client> {
 async function executeCommand(conn: Client, command: string): Promise<string> {
   console.log('Executing command:', command.slice(0, 100) + '...');
   return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`Command timed out after ${COMMAND_TIMEOUT/1000} seconds`));
+    }, COMMAND_TIMEOUT);
+
     conn.exec(command, (err, stream) => {
       if (err) {
+        clearTimeout(timeoutId);
         logEvent("Command execution error:", err);
         return reject(err);
       }
@@ -101,15 +111,11 @@ async function executeCommand(conn: Client, command: string): Promise<string> {
       stream.stderr.on('data', (data: Buffer) => errorOutput += data.toString());
       
       stream.on('close', () => {
-        // Consider container operations successful if:
-        // 1. We have regular output, or
-        // 2. Error output contains expected Docker operations
+        clearTimeout(timeoutId);
         const isContainerOp = errorOutput.includes('Container') || 
                             errorOutput.includes('Starting') || 
-                            errorOutput.includes('Created') ||
-                            errorOutput.includes('Removing') ||
-                            errorOutput.includes('Stopped');
-
+                            errorOutput.includes('Created');
+        
         if (output || isContainerOp) {
           resolve(output || errorOutput);
         } else if (errorOutput) {
@@ -128,19 +134,16 @@ async function executeWithRetry<T>(
   retries = 3,
   delay = 1000
 ): Promise<T> {
-  let lastError: Error;
-  
   for (let i = 0; i < retries; i++) {
     try {
       return await operation();
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      console.log(`Retry ${i + 1}/${retries} failed:`, lastError.message);
-      if (i < retries - 1) await new Promise(r => setTimeout(r, delay));
+      console.log(`Retry ${i + 1}/${retries}:`, error);
+      if (i === retries - 1) throw error;
+      await new Promise(r => setTimeout(r, delay));
     }
   }
-  
-  throw lastError!;
+  throw new Error('Retry failed');
 }
 
 // Main POST handler
@@ -151,7 +154,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Request timeout after 25 seconds')), 25000)
+      setTimeout(() => reject(new Error('Request timeout after 45 seconds')), REQUEST_TIMEOUT)
     );
 
     const connectionPromise = (async () => {
@@ -471,11 +474,23 @@ async function writeFileToVPS(conn: Client, content: string, filePath: string): 
   try {
     console.log(`[${Date.now()}] Writing file to ${filePath}`);
 
-    // Use echo with base64 encoding to avoid here-document issues
+    // Split large files into smaller chunks
+    const maxChunkSize = 4096;
     const base64Content = Buffer.from(content).toString('base64');
-    const command = `echo '${base64Content}' | base64 -d > ${filePath}`;
+    
+    if (base64Content.length > maxChunkSize) {
+      // Write in chunks for large files
+      const tempFile = `/tmp/temp_${Date.now()}.txt`;
+      for (let i = 0; i < base64Content.length; i += maxChunkSize) {
+        const chunk = base64Content.slice(i, i + maxChunkSize);
+        await executeCommand(conn, `echo '${chunk}' >> ${tempFile}`);
+      }
+      await executeCommand(conn, `cat ${tempFile} | base64 -d > ${filePath} && rm ${tempFile}`);
+    } else {
+      // Direct write for small files
+      await executeCommand(conn, `echo '${base64Content}' | base64 -d > ${filePath}`);
+    }
 
-    await executeCommand(conn, command);
     console.log(`[${Date.now()}] File written successfully to ${filePath}`);
     return true;
   } catch (error) {

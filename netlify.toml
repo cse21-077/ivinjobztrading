@@ -34,9 +34,9 @@
   included_files = ["lib/**"]
 
 [functions."api/mt5/connect"]
-  timeout = 30
+  timeout = 45
   memory = 1024
-  maxDuration = 30
+  maxDuration = 45
 
 # Remove the redirects since we're using Next.js API routes
 # [[redirects]]
