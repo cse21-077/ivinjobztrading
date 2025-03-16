@@ -27,35 +27,31 @@ let totalActiveUsers = 0;
 /**
  * Establishes an SSH connection to the VPS
  */
-async function createSSHConnection(): Promise<Client> {
+const createSSHConnection = async (): Promise<Client> => {
   return new Promise((resolve, reject) => {
+    const conn = new Client();
+
+    conn.on("ready", () => resolve(conn));
+    conn.on("error", (err) => reject(err));
+
     try {
-      const conn = new Client();
-      
-      conn.on("ready", () => {
-        resolve(conn);
-      });
-
-      conn.on("error", (err) => {
-        console.error("SSH error:", err);
-        reject(err);
-      });
-
       const privateKey = Buffer.from(process.env.VPS_PRIVATE_KEY || '', 'base64').toString('utf-8');
-      
+
+      if (!process.env.VPS_HOST || !process.env.VPS_USERNAME) {
+        throw new Error('Missing VPS configuration');
+      }
+
       conn.connect({
         host: process.env.VPS_HOST,
         username: process.env.VPS_USERNAME,
-        port: parseInt(process.env.VPS_PORT || '22'),
-        privateKey,
-        readyTimeout: 10000
+        port: 22,
+        privateKey
       });
-
     } catch (error) {
       reject(error);
     }
   });
-}
+};
 
 /**
  * Executes a command on the VPS via SSH

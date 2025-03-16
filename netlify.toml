@@ -30,6 +30,7 @@
 [functions]
   node_bundler = "esbuild"
   external_node_modules = ["ssh2"]
+  included_files = ["lib/**"]
 
 [[redirects]]
   from = "/api/*"
