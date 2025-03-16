@@ -20,6 +20,19 @@ interface InstanceInfo {
   symbol: string;
   timeframe: string;
   lastActive: Date;
+  // Add safe defaults
+  accountId?: string;
+  server?: string;
+}
+
+// Add request type validation
+interface MT5ConnectRequest {
+  accountId: string;
+  password: string;
+  server: string;
+  userId: string;
+  symbol: string;
+  timeframe?: string;
 }
 
 // Global state management
@@ -307,111 +320,84 @@ export async function POST(request: NextRequest) {
   try {
     logs.push(logEvent("Received POST request"));
 
-    // Log request details
-    const url = request.url;
-    const headers = Object.fromEntries(request.headers);
-    logs.push(logEvent("Request details", { url, headers }));
-
-    const body = await request.json();
-    logs.push(logEvent("Request body", {
-      ...body,
-      password: '[REDACTED]' // Don't log sensitive data
-    }));
-
-    const { accountId, password, server, userId, symbol, timeframe } = body;
-
-    // Validation
-    if (!accountId || !password || !server || !userId || !symbol) {
-      logs.push(logEvent("Validation failed - Missing fields"));
+    // Safely parse request body
+    let body;
+    try {
+      body = await request.json();
+    } catch (parseError) {
       return NextResponse.json(
-        { 
-          success: false, 
-          message: "Missing required fields",
-          logs 
-        },
+        { success: false, message: "Invalid request format", logs },
         { status: 400 }
       );
     }
 
-    // Test SSH connection with better error handling
-    logs.push(logEvent("Testing SSH connection"));
-    const conn = await createSSHConnection();
+    // Safe destructuring with null checks
+    const { accountId, password, server, userId, symbol, timeframe } = body || {};
     
-    // Try a simple command with improved error handling
-    const testResult = await new Promise<string>((resolve, reject) => {
-      if (!conn) {
-        logs.push(logEvent("SSH connection failed - null connection"));
-        reject(new Error("SSH connection failed"));
-        return;
-      }
-
-      conn.exec('echo "test connection"', (err: Error | undefined, stream: ClientChannel) => {
-        if (err) {
-          const errorMsg = err?.toString() || "Unknown SSH execution error";
-          logs.push(logEvent("SSH exec error", { error: errorMsg }));
-          reject(new Error(errorMsg));
-          return;
-        }
-
-        if (!stream) {
-          logs.push(logEvent("SSH stream error - null stream"));
-          reject(new Error("Failed to create SSH stream"));
-          return;
-        }
-
-        let data = '';
-        stream.on('data', (chunk: Buffer) => {
-          if (chunk) {
-            data += chunk.toString('utf8');
-          }
-        });
-
-        stream.on('end', () => {
-          const result = data.trim();
-          logs.push(logEvent("SSH stream ended", { result }));
-          resolve(result);
-        });
-
-        stream.on('error', (streamErr: Error) => {
-          const errorMsg = streamErr?.toString() || "Unknown stream error";
-          logs.push(logEvent("SSH stream error", { error: errorMsg }));
-          reject(new Error(errorMsg));
-        });
-      });
-    });
-
-    // Clean up connection
-    if (conn) {
-      conn.end();
+    // Validation with type checks
+    if (!accountId?.toString() || 
+        !password?.toString() || 
+        !server?.toString() || 
+        !userId?.toString() || 
+        !symbol?.toString()) {
+      return NextResponse.json(
+        { success: false, message: "Missing or invalid required fields", logs },
+        { status: 400 }
+      );
     }
 
-    logs.push(logEvent("SSH test complete", { output: testResult }));
+    // Find available instance
+    const instanceId = await findAvailableInstance();
+    if (!instanceId) {
+      return NextResponse.json(
+        { success: false, message: "No available instances", logs },
+        { status: 503 }
+      );
+    }
 
-    return NextResponse.json({ 
-      success: true, 
-      message: "Connection successful",
-      test: testResult,
+    // Start MT5 instance with string conversion safety
+    const started = await startMT5Instance(
+      instanceId,
+      userId.toString(),
+      accountId.toString(),
+      password.toString(),
+      server.toString(),
+      symbol.toString(),
+      (timeframe || 'M5').toString()
+    );
+
+    if (!started) {
+      logs.push(logEvent("Failed to start instance", { instanceId }));
+      return NextResponse.json(
+        { success: false, message: "Failed to start instance", logs },
+        { status: 500 }
+      );
+    }
+
+    logs.push(logEvent("Instance started successfully", { instanceId }));
+    return NextResponse.json({
+      success: true,
+      message: "Instance started successfully",
+      instanceId,
       logs
     });
 
   } catch (error) {
     // Improved error handling
-    const errorMessage = error instanceof Error 
-      ? error.message 
-      : "An unknown error occurred";
-    
-    logs.push(logEvent("Error in POST handler", {
-      message: errorMessage,
-      stack: error instanceof Error ? error.stack : undefined,
-      type: error instanceof Error ? error.name : typeof error
-    }));
+    const errorDetails = {
+      message: error instanceof Error ? error.message : "Unknown error",
+      type: error instanceof Error ? error.name : typeof error,
+      stack: error instanceof Error ? error.stack : undefined
+    };
 
+    logs.push(logEvent("Error in POST handler", errorDetails));
+    
     return NextResponse.json(
       { 
         success: false, 
-        message: "Connection failed",
-        error: errorMessage,
-        logs
+        message: errorDetails.message,
+        error: errorDetails,
+        logs 
       },
       { status: 500 }
     );

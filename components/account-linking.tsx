@@ -175,6 +175,7 @@ export default function AccountLinking() {
     setConnectionError(null);
 
     try {
+      // Log connection attempt
       console.log("Connection attempt:", {
         accountId,
         server,
@@ -197,6 +198,7 @@ export default function AccountLinking() {
         }),
       });
 
+      // Log response status
       console.log("Server response status:", {
         status: response.status,
         statusText: response.statusText,
@@ -204,72 +206,58 @@ export default function AccountLinking() {
       });
 
       const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || data.message || "Connection failed");
-      }
 
+      // Log response data (safely)
       console.log("Server response data:", {
-        success: data.success,
-        message: data.message,
-        logs: data.logs
+        success: data?.success,
+        message: data?.message,
+        logs: data?.logs || []
       });
 
-      if (data.success) {
-        setIsConnected(true);
-        setInstanceId(data.instanceId);
-
-        // Store connection details in localStorage
-        localStorage.setItem('instanceId', data.instanceId.toString());
-        localStorage.setItem('userId', user?.uid || '');
-        localStorage.setItem('tradingSymbol', selectedPair.name);
-        localStorage.setItem('timeframe', timeframe);
-
-        if (user) {
-          await setDoc(
-            doc(db, "mtConnections", user.uid),
-            {
-              isConnected: true,
-              instanceId: data.instanceId,
-              accountId,
-              server,
-              tradingPair: selectedPair,
-              timeframe,
-              lastConnected: new Date().toISOString(),
-            },
-            { merge: true }
-          );
-        }
-        
-        toast.success("Successfully connected to MetaTrader");
-        
-        // Force navigation to trading area
-        router.push("/tradingarea");
-        router.refresh(); // Force a refresh of the new page
-        return; // Exit early after successful connection
-      } else {
+      if (!response.ok || !data?.success) {
+        const errorMessage = data?.error || data?.message || "Connection failed";
         console.error("Connection failed:", {
           status: response.status,
-          error: data.error,
-          message: data.message,
-          serverLogs: data.logs
+          error: errorMessage,
+          logs: data?.logs || []
         });
-
-        if (response.status === 400) {
-          setConnectionError("Missing required fields. Please fill in all fields.");
-        } else if (response.status === 401) {
-          setConnectionError("Login verification failed. Please check your credentials.");
-        } else {
-          setConnectionError("Connection failed. Please try again.");
-        }
+        throw new Error(errorMessage);
       }
+
+      // Success handling
+      setIsConnected(true);
+      setInstanceId(data.instanceId);
+
+      if (user) {
+        await setDoc(
+          doc(db, "mtConnections", user.uid),
+          {
+            isConnected: true,
+            instanceId: data.instanceId,
+            accountId,
+            server,
+            tradingPair: selectedPair,
+            timeframe,
+            lastConnected: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      }
+      
+      toast.success("Successfully connected to MetaTrader");
+      router.push("/tradingarea");
+      router.refresh();
+
     } catch (error) {
       console.error("Connection Error:", {
         error,
-        message: error instanceof Error ? error.message : String(error),
+        message: error instanceof Error ? error.message : "Unknown error",
         timestamp: new Date().toISOString()
       });
-      setConnectionError(error instanceof Error ? error.message : "Connection failed");
+
+      const errorMessage = error instanceof Error ? error.message : "Connection failed";
+      setConnectionError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setIsConnecting(false);
     }
