@@ -5,6 +5,7 @@
 [build.environment]
   NODE_VERSION = "18"
   NODE_OPTIONS = "--max-old-space-size=4096"
+  NEXT_PRIVATE_TARGET = "server"
 
 # Handle ESLint warnings but don't fail the build
 [build.processing]
@@ -32,7 +33,11 @@
   external_node_modules = ["ssh2"]
   included_files = ["lib/**"]
 
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
+# Remove the redirects since we're using Next.js API routes
+# [[redirects]]
+#   from = "/api/*"
+#   to = "/.netlify/functions/:splat"
+#   status = 200
+
+[dev]
+  framework = "next"

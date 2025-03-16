@@ -3,6 +3,8 @@ import { Client } from "ssh2";
 import * as fs from "fs";
 import * as path from "path";
 
+export const runtime = "nodejs"; // Force Node.js runtime instead of Edge
+
 // VPS Connection Details (Consider moving these to environment variables)
 const VPS_HOST = process.env.VPS_HOST || "129.151.171.200";
 const VPS_USERNAME = process.env.VPS_USERNAME || "ubuntu";
