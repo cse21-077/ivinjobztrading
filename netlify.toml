@@ -24,5 +24,11 @@
 [build.processing.images]
   compress = true
 
+[functions]
+  directory = "functions"
+  node_bundler = "esbuild"
+  included_files = ["**/*"]
+  timeout = 30 # Increase timeout to 30 seconds
+
 [[plugins]]
   package = "@netlify/plugin-nextjs"
