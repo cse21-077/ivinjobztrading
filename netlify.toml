@@ -6,6 +6,7 @@
   NODE_VERSION = "18"
   NODE_OPTIONS = "--max-old-space-size=4096"
 
+# Handle ESLint warnings but don't fail the build
 [build.processing]
   skip_processing = false
 
@@ -22,13 +23,6 @@
 
 [build.processing.images]
   compress = true
-
-[functions]
-  node_bundler = "esbuild"
-  included_files = ["**/*"]
-  [functions.timeout]
-    nodejs = 30  # Timeout for SSR functions
-    background = 30  # Timeout for background functions
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
