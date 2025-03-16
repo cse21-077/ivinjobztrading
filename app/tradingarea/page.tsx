@@ -18,8 +18,9 @@ export default function TradingArea() {
     const checkConnection = () => {
       const storedInstanceId = localStorage.getItem('instanceId');
       const storedUserId = localStorage.getItem('userId');
+      const isConnected = localStorage.getItem('isConnected');
       
-      if (!storedInstanceId || !storedUserId) {
+      if (!storedInstanceId || !storedUserId || !isConnected) {
         router.replace('/');
         return;
       }

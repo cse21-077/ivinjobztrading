@@ -225,28 +225,37 @@ export default function AccountLinking() {
       }
 
       // Success handling
-      setIsConnected(true);
-      setInstanceId(data.instanceId);
-
-      if (user) {
-        await setDoc(
-          doc(db, "mtConnections", user.uid),
-          {
-            isConnected: true,
-            instanceId: data.instanceId,
-            accountId,
-            server,
-            tradingPair: selectedPair,
-            timeframe,
-            lastConnected: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-      }
+      if (data.success) {
+        // Store connection details in localStorage
+        localStorage.setItem('instanceId', data.instanceId.toString());
+        localStorage.setItem('userId', user?.uid || '');
+        localStorage.setItem('tradingSymbol', selectedPair?.name || '');
+        localStorage.setItem('timeframe', timeframe);
+        localStorage.setItem('isConnected', 'true');
       
-      toast.success("Successfully connected to MetaTrader");
-      router.push("/tradingarea");
-      router.refresh();
+        setIsConnected(true);
+        setInstanceId(data.instanceId);
+      
+        if (user) {
+          await setDoc(
+            doc(db, "mtConnections", user.uid),
+            {
+              isConnected: true,
+              instanceId: data.instanceId,
+              accountId,
+              server,
+              tradingPair: selectedPair,
+              timeframe,
+              lastConnected: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        }
+        
+        toast.success("Successfully connected to MetaTrader");
+        router.push("/tradingarea");
+        router.refresh();
+      }
 
     } catch (error) {
       console.error("Connection Error:", {

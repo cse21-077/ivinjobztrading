@@ -1,60 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Client, ClientChannel } from "ssh2";
+import { Client } from "ssh2";
 import * as fs from "fs";
 import * as path from "path";
 
-export const runtime = "nodejs"; // Force Node.js runtime instead of Edge
+export const runtime = "nodejs";
 
-// VPS Connection Details (Consider moving these to environment variables)
+// VPS Connection Details
 const VPS_HOST = process.env.VPS_HOST || "129.151.171.200";
 const VPS_USERNAME = process.env.VPS_USERNAME || "ubuntu";
 const VPS_PORT = parseInt(process.env.VPS_PORT || "22");
-const MAX_INSTANCES = parseInt(process.env.MAX_INSTANCES || "15"); // Reduced to 15 instances
+const MAX_INSTANCES = parseInt(process.env.MAX_INSTANCES || "15");
 
-// Use absolute path to locate the SSH key
-const VPS_PRIVATE_KEY_PATH = path.join(process.cwd(), "lib", "ssh-key-2025-03-02.key");
-
-// In-memory store to track active instances and their users
+// Instance tracking
 interface InstanceInfo {
   userId: string;
   symbol: string;
   timeframe: string;
   lastActive: Date;
-  // Add safe defaults
-  accountId?: string;
-  server?: string;
 }
 
-// Add request type validation
-interface MT5ConnectRequest {
-  accountId: string;
-  password: string;
-  server: string;
-  userId: string;
-  symbol: string;
-  timeframe?: string;
-}
-
-// Global state management
 const instanceMap: Record<number, InstanceInfo | null> = {};
 let totalActiveUsers = 0;
 
-// Add logging helper
+// Logging helper
 const logEvent = (message: string, data?: any) => {
-  const timestamp = new Date().toISOString();
-  const logMessage = data ? 
-    `[${timestamp}] ${message}: ${JSON.stringify(data)}` :
-    `[${timestamp}] ${message}`;
-  console.log(logMessage);
-  return logMessage; // Return for response logging
+  console.log(`[${new Date().toISOString()}] ${message}`, data ? data : '');
 };
 
-/**
- * Establishes an SSH connection to the VPS
- */
-const createSSHConnection = async (): Promise<Client> => {
+// SSH Connection with proper error handling
+async function createSSHConnection(): Promise<Client> {
   return new Promise((resolve, reject) => {
-    logEvent("Creating SSH connection");
     const conn = new Client();
 
     conn.on("ready", () => {
@@ -62,92 +37,158 @@ const createSSHConnection = async (): Promise<Client> => {
       resolve(conn);
     });
 
-    conn.on("error", (err: Error & { code?: string }) => {
-      logEvent("SSH connection error", {
-        error: err.message,
-        stack: err.stack,
-        code: err.code || 'unknown'  // Add fallback for code
-      });
+    conn.on("error", (err) => {
+      logEvent("SSH connection error:", err);
       reject(err);
     });
 
     try {
-      // Log environment variables (excluding private key)
-      logEvent("Connection config", {
-        host: process.env.VPS_HOST,
-        username: process.env.VPS_USERNAME,
-        port: process.env.VPS_PORT,
-        hasPrivateKey: !!process.env.VPS_PRIVATE_KEY
-      });
-
-      if (!process.env.VPS_PRIVATE_KEY) {
-        throw new Error('Missing private key');
+      const privateKey = process.env.VPS_PRIVATE_KEY;
+      if (!privateKey) {
+        throw new Error("SSH private key not found in environment variables");
       }
 
-      const privateKey = Buffer.from(process.env.VPS_PRIVATE_KEY, 'base64').toString('utf-8');
-      
-      // Log key format check (safely)
-      logEvent("Private key check", {
-        hasBeginMarker: privateKey.includes('BEGIN RSA PRIVATE KEY'),
-        hasEndMarker: privateKey.includes('END RSA PRIVATE KEY'),
-        keyLength: privateKey.length,
-        isBase64: /^[A-Za-z0-9+/=]+$/.test(process.env.VPS_PRIVATE_KEY)
-      });
-
       conn.connect({
-        host: process.env.VPS_HOST,
-        username: process.env.VPS_USERNAME,
-        port: parseInt(process.env.VPS_PORT || '22'),
-        privateKey,
-        debug: (msg) => logEvent("SSH Debug", { message: msg }),
-        readyTimeout: 30000 // Increase timeout to 30 seconds
+        host: VPS_HOST,
+        port: VPS_PORT,
+        username: VPS_USERNAME,
+        privateKey: Buffer.from(privateKey, 'base64').toString('utf-8'),
+        readyTimeout: 30000
       });
     } catch (error) {
-      const err = error as Error;
-      logEvent("SSH connection setup error", {
-        message: err.message,
-        stack: err.stack,
-        type: err.name
-      });
+      logEvent("SSH connection setup error:", error);
       reject(error);
     }
   });
-};
+}
 
-/**
- * Executes a command on the VPS via SSH
- */
+// Update the executeCommand function to ignore Docker orphan warnings
 async function executeCommand(conn: Client, command: string): Promise<string> {
   return new Promise((resolve, reject) => {
     conn.exec(command, (err, stream) => {
-      if (err) return reject(err);
+      if (err) {
+        logEvent("Command execution error:", err);
+        return reject(err);
+      }
 
       let output = '';
       let errorOutput = '';
 
-      stream.on('data', (data: Buffer) => {
-        output += data.toString();
-      });
-
-      stream.stderr.on('data', (data: Buffer) => {
-        errorOutput += data.toString();
-      });
-
+      stream.on('data', (data: Buffer) => output += data.toString());
+      stream.stderr.on('data', (data: Buffer) => errorOutput += data.toString());
+      
       stream.on('close', () => {
-        if (errorOutput) {
-          console.warn('Command stderr:', errorOutput); // Log warnings but don't fail
+        // Consider container operations successful if:
+        // 1. We have regular output, or
+        // 2. Error output contains expected Docker operations
+        const isContainerOp = errorOutput.includes('Container') || 
+                            errorOutput.includes('Starting') || 
+                            errorOutput.includes('Created') ||
+                            errorOutput.includes('Removing') ||
+                            errorOutput.includes('Stopped');
+
+        if (output || isContainerOp) {
+          resolve(output || errorOutput);
+        } else if (errorOutput) {
+          logEvent("Command error output:", errorOutput);
+          reject(new Error(errorOutput));
+        } else {
+          resolve('');
         }
-        resolve(output); // Always resolve if we get here
       });
     });
   });
 }
 
-/**
- * Get total count of active MT5 instances
- */
+// Main POST handler
+export async function POST(request: NextRequest) {
+  const logs: string[] = [];
+  let conn: Client | null = null as Client | null;
+
+  try {
+    const body = await request.json();
+    const { accountId, password, server, userId, symbol, timeframe } = body;
+
+    logEvent("Connection request received", { userId, accountId, server, symbol, timeframe });
+
+    // Check existing connection
+    const existingInstance = Object.entries(instanceMap).find(
+      ([_, info]) => info && info.userId === userId
+    );
+
+    if (existingInstance) {
+      const [instanceId, info] = existingInstance;
+      return NextResponse.json({
+        success: true,
+        message: "Already connected",
+        instanceId: parseInt(instanceId),
+        tradingSymbol: info!.symbol,
+        timeframe: info!.timeframe
+      });
+    }
+
+    // Find available instance
+    const instanceId = await findAvailableInstance();
+    if (!instanceId) {
+      const activeCount = await getActiveInstanceCount();
+      return NextResponse.json(
+        {
+          success: false,
+          message: `Server at capacity (${activeCount}/${MAX_INSTANCES} instances running)`,
+          isFull: true,
+          activeUsers: activeCount
+        },
+        { status: 503 }
+      );
+    }
+
+    // Start MT5 instance
+    const started = await startMT5Instance(
+      instanceId,
+      userId,
+      accountId,
+      password,
+      server,
+      symbol,
+      timeframe || "M5"
+    );
+
+    if (!started) {
+      throw new Error("Failed to start MT5 instance");
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "MT5 instance started successfully",
+      instanceId,
+      tradingSymbol: symbol,
+      timeframe: timeframe || "M5"
+    });
+
+  } catch (error) {
+    logEvent("Error in POST handler:", error);
+    return NextResponse.json(
+      { 
+        success: false, 
+        message: error instanceof Error ? error.message : "Internal server error"
+      },
+      { status: 500 }
+    );
+  } finally {
+    if (conn) {
+      try {
+        conn.end();
+        logEvent("SSH connection closed");
+      } catch (e) {
+        logEvent("Error closing SSH connection:", e);
+      }
+    }
+  }
+}
+
+// Keep your existing helper functions (getActiveInstanceCount, findAvailableInstance, startMT5Instance)
 async function getActiveInstanceCount(): Promise<number> {
-  let conn: Client | null = null;
+  let conn: Client | null = null as Client | null;
 
   try {
     conn = await createSSHConnection();
@@ -166,11 +207,8 @@ async function getActiveInstanceCount(): Promise<number> {
   }
 }
 
-/**
- * Find an available MT5 instance on the VPS
- */
 async function findAvailableInstance(): Promise<number | null> {
-  let conn: Client | null = null;
+  let conn: Client | null = null as Client | null;
 
   try {
     conn = await createSSHConnection();
@@ -199,29 +237,7 @@ async function findAvailableInstance(): Promise<number | null> {
   }
 }
 
-/**
- * Write file content to the VPS using base64 encoding
- */
-async function writeFileToVPS(conn: Client, content: string, filePath: string): Promise<boolean> {
-  try {
-    console.log(`[${Date.now()}] Writing file to ${filePath}`);
-
-    // Use echo with base64 encoding to avoid here-document issues
-    const base64Content = Buffer.from(content).toString('base64');
-    const command = `echo '${base64Content}' | base64 -d > ${filePath}`;
-
-    await executeCommand(conn, command);
-    console.log(`[${Date.now()}] File written successfully to ${filePath}`);
-    return true;
-  } catch (error) {
-    console.error(`[${Date.now()}] Error writing file to ${filePath}:`, error);
-    return false;
-  }
-}
-
-/**
- * Start a specific MT5 instance with user configuration
- */
+// Update startMT5Instance to use a simpler docker-compose command
 async function startMT5Instance(
   instanceId: number,
   userId: string,
@@ -231,7 +247,7 @@ async function startMT5Instance(
   symbol: string,
   timeframe: string
 ): Promise<boolean> {
-  let conn: Client | null = null;
+  let conn: Client | null = null as Client | null;
 
   try {
     console.log(`[${Date.now()}] Starting MT5 instance ${instanceId} for user ${userId}`);
@@ -265,17 +281,18 @@ TimeFrame=${timeframe || "M5"}
       throw new Error(`Failed to write INI file to ${tempFilePath}`);
     }
 
-    // Generate docker-compose.yml content
+    // Generate docker-compose.yml content with version
     const composeContent = `
-    services:
-      mt5-instance-${instanceId}:
-        image: mt5-image:v1
-        container_name: mt5-instance-${instanceId}
-        volumes:
-          - ${tempFilePath}:${containerIniPath}
-        restart: unless-stopped
-        command: /home/trader/start_mt5.sh  # Absolute path
-    `.trim();
+version: '3'
+services:
+  mt5-instance-${instanceId}:
+    image: mt5-image:v1
+    container_name: mt5-instance-${instanceId}
+    volumes:
+      - ${tempFilePath}:${containerIniPath}
+    restart: unless-stopped
+    command: ./start_mt5.sh
+`.trim();
 
     // Write the docker-compose.yml file using our new method
     console.log(`[${Date.now()}] Creating docker-compose file for instance ${instanceId}`);
@@ -284,13 +301,12 @@ TimeFrame=${timeframe || "M5"}
       throw new Error(`Failed to write compose file to ${composeFilePath}`);
     }
 
-    // Start the instance using docker-compose
+    // Use simpler docker compose command
     console.log(`[${Date.now()}] Starting docker container for instance ${instanceId}`);
     await executeCommand(
       conn,
       `cd /home/ubuntu/phase1-compose && docker compose -f docker-compose-${instanceId}.yml up -d`
     );
-    // Notice the space between "docker" and "compose" - this is intentional ✅
 
     // Store instance info in our map
     instanceMap[instanceId] = {
@@ -312,104 +328,19 @@ TimeFrame=${timeframe || "M5"}
   }
 }
 
-/**
- * API handler for connecting to MT5
- */
-export async function POST(request: NextRequest) {
-  const logs: string[] = [];
-  let conn: Client | null = null;
-
+async function writeFileToVPS(conn: Client, content: string, filePath: string): Promise<boolean> {
   try {
-    logs.push(logEvent("Received POST request"));
+    console.log(`[${Date.now()}] Writing file to ${filePath}`);
 
-    // Safely parse request body
-    let body;
-    try {
-      body = await request.json();
-    } catch (parseError) {
-      return NextResponse.json(
-        { success: false, message: "Invalid request format", logs },
-        { status: 400 }
-      );
-    }
+    // Use echo with base64 encoding to avoid here-document issues
+    const base64Content = Buffer.from(content).toString('base64');
+    const command = `echo '${base64Content}' | base64 -d > ${filePath}`;
 
-    // Safe destructuring with null checks
-    const { accountId, password, server, userId, symbol, timeframe } = body || {};
-    
-    // Validation with type checks
-    if (!accountId?.toString() || 
-        !password?.toString() || 
-        !server?.toString() || 
-        !userId?.toString() || 
-        !symbol?.toString()) {
-      return NextResponse.json(
-        { success: false, message: "Missing or invalid required fields", logs },
-        { status: 400 }
-      );
-    }
-
-    // Find available instance
-    const instanceId = await findAvailableInstance();
-    if (!instanceId) {
-      return NextResponse.json(
-        { success: false, message: "No available instances", logs },
-        { status: 503 }
-      );
-    }
-
-    // Start MT5 instance with string conversion safety
-    const started = await startMT5Instance(
-      instanceId,
-      userId.toString(),
-      accountId.toString(),
-      password.toString(),
-      server.toString(),
-      symbol.toString(),
-      (timeframe || 'M5').toString()
-    );
-
-    if (!started) {
-      logs.push(logEvent("Failed to start instance", { instanceId }));
-      return NextResponse.json(
-        { success: false, message: "Failed to start instance", logs },
-        { status: 500 }
-      );
-    }
-
-    logs.push(logEvent("Instance started successfully", { instanceId }));
-    return NextResponse.json({
-      success: true,
-      message: "Instance started successfully",
-      instanceId,
-      logs
-    });
-
+    await executeCommand(conn, command);
+    console.log(`[${Date.now()}] File written successfully to ${filePath}`);
+    return true;
   } catch (error) {
-    // Improved error handling
-    const errorDetails = {
-      message: error instanceof Error ? error.message : "Unknown error",
-      type: error instanceof Error ? error.name : typeof error,
-      stack: error instanceof Error ? error.stack : undefined
-    };
-
-    logs.push(logEvent("Error in POST handler", errorDetails));
-    
-    return NextResponse.json(
-      { 
-        success: false, 
-        message: errorDetails.message,
-        error: errorDetails,
-        logs 
-      },
-      { status: 500 }
-    );
-  } finally {
-    if (conn) {
-      try {
-        conn.end();
-      } catch (e) {
-        console.error("Error closing SSH connection:", e);
-      }
-    }
+    console.error(`[${Date.now()}] Error writing file to ${filePath}:`, error);
+    return false;
   }
 }
