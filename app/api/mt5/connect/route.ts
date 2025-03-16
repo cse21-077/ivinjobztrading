@@ -102,19 +102,28 @@ async function executeCommand(conn: Client, command: string): Promise<string> {
 
 // Main POST handler
 export async function POST(request: NextRequest) {
+  console.log('=== MT5 Connection Process Started ===');
   const logs: string[] = [];
   let conn: Client | null = null as Client | null;
 
   try {
+    console.log('1. Parsing request body...');
     const body = await request.json();
+    console.log('2. Request body:', { 
+      ...body, 
+      password: '[HIDDEN]' 
+    });
+
     const { accountId, password, server, userId, symbol, timeframe } = body;
 
     logEvent("Connection request received", { userId, accountId, server, symbol, timeframe });
 
-    // Check existing connection
+    // Add before instance check
+    console.log('3. Checking for existing instance...');
     const existingInstance = Object.entries(instanceMap).find(
       ([_, info]) => info && info.userId === userId
     );
+    console.log('4. Existing instance check result:', existingInstance);
 
     if (existingInstance) {
       const [instanceId, info] = existingInstance;
@@ -127,8 +136,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Find available instance
+    // Add before findAvailableInstance
+    console.log('5. Looking for available instance...');
     const instanceId = await findAvailableInstance();
+    console.log('6. Available instance result:', instanceId);
+
     if (!instanceId) {
       const activeCount = await getActiveInstanceCount();
       return NextResponse.json(
@@ -142,7 +154,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Start MT5 instance
+    // Add before startMT5Instance
+    console.log('7. Attempting to start MT5 instance:', instanceId);
     const started = await startMT5Instance(
       instanceId,
       userId,
@@ -152,10 +165,14 @@ export async function POST(request: NextRequest) {
       symbol,
       timeframe || "M5"
     );
+    console.log('8. MT5 start result:', started);
 
     if (!started) {
       throw new Error("Failed to start MT5 instance");
     }
+
+    // Add at the end of try block
+    console.log('9. Connection process completed successfully');
 
     return NextResponse.json({
       success: true,
@@ -167,6 +184,11 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     logEvent("Error in POST handler:", error);
+    console.error('❌ Connection error:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      timestamp: new Date().toISOString()
+    });
     return NextResponse.json(
       { 
         success: false, 
@@ -247,10 +269,20 @@ async function startMT5Instance(
   symbol: string,
   timeframe: string
 ): Promise<boolean> {
+  console.log(`🔄 MT5 Instance ${instanceId} - Start Process`);
+  console.log(`📝 Config Details:`, {
+    instanceId,
+    userId,
+    server,
+    symbol,
+    timeframe
+  });
+
   let conn: Client | null = null as Client | null;
 
   try {
     console.log(`[${Date.now()}] Starting MT5 instance ${instanceId} for user ${userId}`);
+    console.log('1️⃣ Creating SSH connection...');
     conn = await createSSHConnection();
 
     // Path for instance-specific docker-compose file
@@ -274,6 +306,7 @@ TimeFrame=${timeframe || "M5"}
     // Create a temporary file with the content on the VPS
     const tempFilePath = `/tmp/mt5-login-${instanceId}.ini`;
     console.log(`[${Date.now()}] Creating config file for instance ${instanceId}`);
+    console.log('2️⃣ Preparing config files...');
 
     // Write the ini file using our new method
     const iniWriteSuccess = await writeFileToVPS(conn, iniContent, tempFilePath);
@@ -303,6 +336,7 @@ services:
 
     // Use simpler docker compose command
     console.log(`[${Date.now()}] Starting docker container for instance ${instanceId}`);
+    console.log('3️⃣ Starting Docker container...');
     await executeCommand(
       conn,
       `cd /home/ubuntu/phase1-compose && docker compose -f docker-compose-${instanceId}.yml up -d`
@@ -322,6 +356,11 @@ services:
     return true;
   } catch (error) {
     console.error(`[${Date.now()}] Error starting MT5 instance ${instanceId}:`, error);
+    console.error('❌ MT5 Instance Start Error:', {
+      instanceId,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
     return false;
   } finally {
     if (conn) conn.end();
