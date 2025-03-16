@@ -32,56 +32,26 @@ async function createSSHConnection(): Promise<Client> {
     try {
       const conn = new Client();
       
-      // Add connection timeout
-      const timeout = setTimeout(() => {
-        conn.end();
-        reject(new Error('SSH connection timeout'));
-      }, 10000);
-
       conn.on("ready", () => {
-        clearTimeout(timeout);
         resolve(conn);
       });
 
       conn.on("error", (err) => {
-        clearTimeout(timeout);
-        console.error("SSH connection error:", err);
+        console.error("SSH error:", err);
         reject(err);
       });
 
-      // Get the private key from environment variable
-      const base64Key = process.env.VPS_PRIVATE_KEY;
-      if (!base64Key) {
-        throw new Error('VPS_PRIVATE_KEY environment variable is not set');
-      }
+      const privateKey = Buffer.from(process.env.VPS_PRIVATE_KEY || '', 'base64').toString('utf-8');
+      
+      conn.connect({
+        host: process.env.VPS_HOST,
+        username: process.env.VPS_USERNAME,
+        port: parseInt(process.env.VPS_PORT || '22'),
+        privateKey,
+        readyTimeout: 10000
+      });
 
-      try {
-        // Decode and format the private key
-        const privateKey = Buffer.from(base64Key, 'base64').toString('utf-8')
-          .replace(/\\n/g, '\n')  // Replace literal \n with newlines
-          .trim();                // Remove any extra whitespace
-
-        // Verify key format
-        if (!privateKey.includes('-----BEGIN RSA PRIVATE KEY-----')) {
-          throw new Error('Invalid private key format');
-        }
-
-        // Connect with the formatted key
-        conn.connect({
-          host: process.env.VPS_HOST,
-          port: parseInt(process.env.VPS_PORT || '22'),
-          username: process.env.VPS_USERNAME,
-          privateKey,
-          readyTimeout: 10000,
-          keepaliveInterval: 5000,
-          debug: (msg) => console.log('SSH Debug:', msg) // Add debug logging
-        });
-      } catch (keyError) {
-        console.error('Private key processing error:', keyError);
-        reject(keyError);
-      }
     } catch (error) {
-      console.error("SSH connection creation error:", error);
       reject(error);
     }
   });
