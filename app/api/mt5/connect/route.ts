@@ -333,30 +333,59 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Test SSH connection
+    // Test SSH connection with better error handling
     logs.push(logEvent("Testing SSH connection"));
     const conn = await createSSHConnection();
     
-    // Try a simple command
+    // Try a simple command with improved error handling
     const testResult = await new Promise<string>((resolve, reject) => {
+      if (!conn) {
+        logs.push(logEvent("SSH connection failed - null connection"));
+        reject(new Error("SSH connection failed"));
+        return;
+      }
+
       conn.exec('echo "test connection"', (err: Error | undefined, stream: ClientChannel) => {
         if (err) {
-          logs.push(logEvent("SSH exec error", { error: err.message }));
-          reject(err);
+          const errorMsg = err?.toString() || "Unknown SSH execution error";
+          logs.push(logEvent("SSH exec error", { error: errorMsg }));
+          reject(new Error(errorMsg));
+          return;
+        }
+
+        if (!stream) {
+          logs.push(logEvent("SSH stream error - null stream"));
+          reject(new Error("Failed to create SSH stream"));
           return;
         }
 
         let data = '';
-        stream.on('data', (chunk: Buffer) => data += chunk);
-        stream.on('end', () => resolve(data.toString().trim()));
-        stream.on('error', (err: Error) => {
-          logs.push(logEvent("SSH stream error", { error: err.message }));
-          reject(err);
+        stream.on('data', (chunk: Buffer) => {
+          if (chunk) {
+            data += chunk.toString('utf8');
+          }
+        });
+
+        stream.on('end', () => {
+          const result = data.trim();
+          logs.push(logEvent("SSH stream ended", { result }));
+          resolve(result);
+        });
+
+        stream.on('error', (streamErr: Error) => {
+          const errorMsg = streamErr?.toString() || "Unknown stream error";
+          logs.push(logEvent("SSH stream error", { error: errorMsg }));
+          reject(new Error(errorMsg));
         });
       });
     });
 
-    logs.push(logEvent("SSH test result", { output: testResult }));
+    // Clean up connection
+    if (conn) {
+      conn.end();
+    }
+
+    logs.push(logEvent("SSH test complete", { output: testResult }));
 
     return NextResponse.json({ 
       success: true, 
@@ -366,18 +395,22 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    const err = error as Error;
+    // Improved error handling
+    const errorMessage = error instanceof Error 
+      ? error.message 
+      : "An unknown error occurred";
+    
     logs.push(logEvent("Error in POST handler", {
-      message: err.message,
-      stack: err.stack,
-      type: err.name
+      message: errorMessage,
+      stack: error instanceof Error ? error.stack : undefined,
+      type: error instanceof Error ? error.name : typeof error
     }));
 
     return NextResponse.json(
       { 
         success: false, 
         message: "Connection failed",
-        error: err.message,
+        error: errorMessage,
         logs
       },
       { status: 500 }

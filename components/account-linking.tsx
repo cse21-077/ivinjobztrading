@@ -204,11 +204,15 @@ export default function AccountLinking() {
       });
 
       const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || data.message || "Connection failed");
+      }
+
       console.log("Server response data:", {
         success: data.success,
         message: data.message,
-        logs: data.logs,
-        error: data.error
+        logs: data.logs
       });
 
       if (data.success) {
@@ -262,10 +266,10 @@ export default function AccountLinking() {
     } catch (error) {
       console.error("Connection Error:", {
         error,
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: error instanceof Error ? error.message : String(error),
         timestamp: new Date().toISOString()
       });
-      setConnectionError("Internal server error. Please try again later.");
+      setConnectionError(error instanceof Error ? error.message : "Connection failed");
     } finally {
       setIsConnecting(false);
     }
