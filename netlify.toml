@@ -33,6 +33,11 @@
   external_node_modules = ["ssh2"]
   included_files = ["lib/**"]
 
+[functions."api/mt5/connect"]
+  timeout = 30
+  memory = 1024
+  maxDuration = 30
+
 # Remove the redirects since we're using Next.js API routes
 # [[redirects]]
 #   from = "/api/*"

@@ -31,13 +31,22 @@ const logEvent = (message: string, data?: any) => {
 async function createSSHConnection(): Promise<Client> {
   return new Promise((resolve, reject) => {
     const conn = new Client();
+    let timeoutId: NodeJS.Timeout;
+
+    // Add connection timeout
+    timeoutId = setTimeout(() => {
+      conn.end();
+      reject(new Error("SSH connection timeout after 20 seconds"));
+    }, 20000);
 
     conn.on("ready", () => {
+      clearTimeout(timeoutId);
       logEvent("SSH connection ready");
       resolve(conn);
     });
 
     conn.on("error", (err) => {
+      clearTimeout(timeoutId);
       logEvent("SSH connection error:", err);
       reject(err);
     });
@@ -45,17 +54,30 @@ async function createSSHConnection(): Promise<Client> {
     try {
       const privateKey = process.env.VPS_PRIVATE_KEY;
       if (!privateKey) {
-        throw new Error("SSH private key not found in environment variables");
+        throw new Error("SSH private key not found");
       }
 
+      // Fixed SSH connection config
       conn.connect({
         host: VPS_HOST,
         port: VPS_PORT,
         username: VPS_USERNAME,
         privateKey: Buffer.from(privateKey, 'base64').toString('utf-8'),
-        readyTimeout: 30000
+        readyTimeout: 20000,
+        keepaliveInterval: 10000,
+        debug: (debug) => console.log('SSH Debug:', debug),
+        algorithms: {
+          kex: [
+            'ecdh-sha2-nistp256',
+            'ecdh-sha2-nistp384',
+            'ecdh-sha2-nistp521',
+            'diffie-hellman-group-exchange-sha256',
+            'diffie-hellman-group14-sha1'
+          ]
+        }
       });
     } catch (error) {
+      clearTimeout(timeoutId);
       logEvent("SSH connection setup error:", error);
       reject(error);
     }
@@ -101,144 +123,182 @@ async function executeCommand(conn: Client, command: string): Promise<string> {
   });
 }
 
+async function executeWithRetry<T>(
+  operation: () => Promise<T>, 
+  retries = 3,
+  delay = 1000
+): Promise<T> {
+  let lastError: Error;
+  
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.log(`Retry ${i + 1}/${retries} failed:`, lastError.message);
+      if (i < retries - 1) await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  
+  throw lastError!;
+}
+
 // Main POST handler
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   console.log('=== MT5 Connection Process Started ===');
   const logs: string[] = [];
   let conn: Client | null = null as Client | null;
 
   try {
-    console.log('1. Parsing request body...');
-    const body = await request.json();
-    console.log('2. Full request details:', { 
-      ...body,  // Show all details including password for debugging
-      timestamp: new Date().toISOString(),
-      headers: Object.fromEntries(request.headers.entries())
-    });
-
-    const { accountId, password, server, userId, symbol, timeframe } = body;
-
-    // Add validation logging
-    console.log('3. Validating input:', {
-      hasAccountId: !!accountId,
-      hasPassword: !!password,
-      hasServer: !!server,
-      hasUserId: !!userId,
-      hasSymbol: !!symbol,
-      hasTimeframe: !!timeframe
-    });
-
-    logEvent("Connection request received", { userId, accountId, server, symbol, timeframe });
-
-    // Add before SSH connection
-    console.log('4. SSH Connection details:', {
-      host: VPS_HOST,
-      port: VPS_PORT,
-      username: VPS_USERNAME,
-      hasPrivateKey: !!process.env.VPS_PRIVATE_KEY,
-      readyTimeout: 30000
-    });
-
-    // Add before instance check
-    console.log('3. Checking for existing instance...');
-    const existingInstance = Object.entries(instanceMap).find(
-      ([_, info]) => info && info.userId === userId
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Request timeout after 25 seconds')), 25000)
     );
-    console.log('4. Existing instance check result:', existingInstance);
 
-    if (existingInstance) {
-      const [instanceId, info] = existingInstance;
+    const connectionPromise = (async () => {
+      console.log('1. Parsing request body...');
+      const body = await request.json();
+      console.log('2. Full request details:', { 
+        ...body,  // Show all details including password for debugging
+        timestamp: new Date().toISOString(),
+        headers: Object.fromEntries(request.headers.entries())
+      });
+
+      const { accountId, password, server, userId, symbol, timeframe } = body;
+
+      // Add validation logging
+      console.log('3. Validating input:', {
+        hasAccountId: !!accountId,
+        hasPassword: !!password,
+        hasServer: !!server,
+        hasUserId: !!userId,
+        hasSymbol: !!symbol,
+        hasTimeframe: !!timeframe
+      });
+
+      logEvent("Connection request received", { userId, accountId, server, symbol, timeframe });
+
+      // Add before SSH connection
+      console.log('4. SSH Connection details:', {
+        host: VPS_HOST,
+        port: VPS_PORT,
+        username: VPS_USERNAME,
+        hasPrivateKey: !!process.env.VPS_PRIVATE_KEY,
+        readyTimeout: 30000
+      });
+
+      // Add before instance check
+      console.log('3. Checking for existing instance...');
+      const existingInstance = Object.entries(instanceMap).find(
+        ([_, info]) => info && info.userId === userId
+      );
+      console.log('4. Existing instance check result:', existingInstance);
+
+      if (existingInstance) {
+        const [instanceId, info] = existingInstance;
+        return NextResponse.json({
+          success: true,
+          message: "Already connected",
+          instanceId: parseInt(instanceId),
+          tradingSymbol: info!.symbol,
+          timeframe: info!.timeframe
+        });
+      }
+
+      // Add before findAvailableInstance
+      console.log('5. Looking for available instance...');
+      const instanceId = await findAvailableInstance();
+      console.log('6. Available instance result:', instanceId);
+
+      if (!instanceId) {
+        const activeCount = await getActiveInstanceCount();
+        return NextResponse.json(
+          {
+            success: false,
+            message: `Server at capacity (${activeCount}/${MAX_INSTANCES} instances running)`,
+            isFull: true,
+            activeUsers: activeCount
+          },
+          { status: 503 }
+        );
+      }
+
+      // Add to startMT5Instance
+      console.log('5. Starting MT5 instance with config:', {
+        instanceId,
+        accountId,
+        server,
+        symbol,
+        timeframe,
+        tempFilePath: `/tmp/mt5-login-${instanceId}.ini`,
+        composePath: `/home/ubuntu/phase1-compose/docker-compose-${instanceId}.yml`
+      });
+
+      // Add before startMT5Instance
+      console.log('7. Attempting to start MT5 instance:', instanceId);
+      const started = await startMT5Instance(
+        instanceId,
+        userId,
+        accountId,
+        password,
+        server,
+        symbol,
+        timeframe || "M5"
+      );
+      console.log('8. MT5 start result:', started);
+
+      if (!started) {
+        return NextResponse.json(
+          { 
+            success: false, 
+            message: "Failed to start MT5 instance",
+            logs 
+          },
+          { status: 500 }
+        );
+      }
+
+      // Add at the end of try block
+      console.log('9. Connection process completed successfully');
+
       return NextResponse.json({
         success: true,
-        message: "Already connected",
-        instanceId: parseInt(instanceId),
-        tradingSymbol: info!.symbol,
-        timeframe: info!.timeframe
+        message: "MT5 instance started successfully",
+        instanceId,
+        tradingSymbol: symbol,
+        timeframe: timeframe || "M5",
+        logs
       });
-    }
+    })();
 
-    // Add before findAvailableInstance
-    console.log('5. Looking for available instance...');
-    const instanceId = await findAvailableInstance();
-    console.log('6. Available instance result:', instanceId);
-
-    if (!instanceId) {
-      const activeCount = await getActiveInstanceCount();
-      return NextResponse.json(
-        {
-          success: false,
-          message: `Server at capacity (${activeCount}/${MAX_INSTANCES} instances running)`,
-          isFull: true,
-          activeUsers: activeCount
-        },
-        { status: 503 }
-      );
-    }
-
-    // Add to startMT5Instance
-    console.log('5. Starting MT5 instance with config:', {
-      instanceId,
-      accountId,
-      server,
-      symbol,
-      timeframe,
-      tempFilePath: `/tmp/mt5-login-${instanceId}.ini`,
-      composePath: `/home/ubuntu/phase1-compose/docker-compose-${instanceId}.yml`
-    });
-
-    // Add before startMT5Instance
-    console.log('7. Attempting to start MT5 instance:', instanceId);
-    const started = await startMT5Instance(
-      instanceId,
-      userId,
-      accountId,
-      password,
-      server,
-      symbol,
-      timeframe || "M5"
-    );
-    console.log('8. MT5 start result:', started);
-
-    if (!started) {
-      throw new Error("Failed to start MT5 instance");
-    }
-
-    // Add at the end of try block
-    console.log('9. Connection process completed successfully');
-
-    return NextResponse.json({
-      success: true,
-      message: "MT5 instance started successfully",
-      instanceId,
-      tradingSymbol: symbol,
-      timeframe: timeframe || "M5"
-    });
+    // Important: Return the result of Promise.race
+    return await Promise.race([connectionPromise, timeoutPromise]) as NextResponse;
 
   } catch (error) {
-    console.error('❌ Connection Error Details:', {
-      error: error instanceof Error ? {
-        name: error.name,
-        message: error.message,
-        stack: error.stack
-      } : error,
+    const errorDetails = {
+      message: error instanceof Error ? error.message : "Unknown error",
+      stack: error instanceof Error ? error.stack : undefined,
       timestamp: new Date().toISOString(),
-      requestUrl: request.url,
-      method: request.method,
-      headers: Object.fromEntries(request.headers.entries())
-    });
+      requestId: request.headers.get('x-nf-request-id') || undefined
+    };
+
+    console.error('Connection Error Details:', errorDetails);
 
     return NextResponse.json(
       { 
         success: false, 
-        message: error instanceof Error ? error.message : "Internal server error",
+        message: errorDetails.message,
+        error: errorDetails,
         logs
       },
-      { status: 500 }
+      { status: error instanceof Error && error.message.includes('timeout') ? 504 : 500 }
     );
   } finally {
     if (conn) {
       try {
-        conn.end();
+        await new Promise<void>((resolve) => {
+          conn?.end();
+          setTimeout(resolve, 1000); // Give connection time to close
+        });
         logEvent("SSH connection closed");
       } catch (e) {
         logEvent("Error closing SSH connection:", e);
@@ -323,6 +383,10 @@ async function startMT5Instance(
     console.log(`[${Date.now()}] Starting MT5 instance ${instanceId} for user ${userId}`);
     console.log('1️⃣ Creating SSH connection...');
     conn = await createSSHConnection();
+    
+    if (!conn) {
+      throw new Error("Failed to establish SSH connection");
+    }
 
     // Path for instance-specific docker-compose file
     const composeFilePath = `/home/ubuntu/phase1-compose/docker-compose-${instanceId}.yml`;
@@ -376,10 +440,7 @@ services:
     // Use simpler docker compose command
     console.log(`[${Date.now()}] Starting docker container for instance ${instanceId}`);
     console.log('3️⃣ Starting Docker container...');
-    await executeCommand(
-      conn,
-      `cd /home/ubuntu/phase1-compose && docker compose -f docker-compose-${instanceId}.yml up -d`
-    );
+    await executeWithRetry(() => executeCommand(conn as Client, `cd /home/ubuntu/phase1-compose && docker compose -f docker-compose-${instanceId}.yml up -d`));
 
     // Store instance info in our map
     instanceMap[instanceId] = {
