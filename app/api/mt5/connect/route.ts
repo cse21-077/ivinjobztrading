@@ -317,6 +317,8 @@ TimeFrame=${timeframe || "M5"}
  */
 export async function POST(request: NextRequest) {
   const logs: string[] = [];
+  let conn: Client | null = null;
+
   try {
     logs.push(logEvent("Received POST request"));
 
@@ -401,5 +403,13 @@ export async function POST(request: NextRequest) {
       },
       { status: 500 }
     );
+  } finally {
+    if (conn) {
+      try {
+        conn.end();
+      } catch (e) {
+        console.error("Error closing SSH connection:", e);
+      }
+    }
   }
 }
