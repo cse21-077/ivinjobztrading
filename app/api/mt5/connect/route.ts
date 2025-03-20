@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 const VPS_HOST = process.env.VPS_HOST || "129.151.171.200";
 const VPS_USERNAME = process.env.VPS_USERNAME || "ubuntu";
 const VPS_PORT = parseInt(process.env.VPS_PORT || "22");
-const MAX_INSTANCES = parseInt(process.env.MAX_INSTANCES || "15");
+const MAX_INSTANCES = parseInt(process.env.MAX_INSTANCES || "60");
 
 // Timeout values
 const SSH_TIMEOUT = 45000;    // 45 seconds
@@ -425,11 +425,15 @@ TimeFrame=${timeframe || "M5"}
 version: '3'
 services:
   mt5-instance-${instanceId}:
-    image: mt5-image:v1
+    image: mt5-image:v2
     container_name: mt5-instance-${instanceId}
     volumes:
       - ${tempFilePath}:${containerIniPath}
     restart: unless-stopped
+    ports:
+      - "590${instanceId}:5901"
+    environment:
+      - DISPLAY=:0
     command: ./start_mt5.sh
 `.trim();
 
